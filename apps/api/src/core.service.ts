@@ -236,7 +236,9 @@ export class CoreService {
   async updateProject(user: AuthUser, id: number, body: any) {
     const before = await this.prisma.project.findUnique({ where: { id } });
     if (!before) throw new NotFoundException("项目不存在");
-    requireAnyPosition(user, [PRODUCT_MANAGER], "只有产品经理可以编辑项目");
+    if (before.ownerId !== user.personId) {
+      requireAnyPosition(user, [PRODUCT_MANAGER], "只有产品经理或项目负责人可以编辑项目");
+    }
     const ownerId = body.ownerId === undefined ? undefined : await this.ensureProductManagerOwner(toInt(body.ownerId));
     const project = await this.prisma.project.update({
       where: { id },

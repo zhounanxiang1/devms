@@ -341,6 +341,7 @@ export function App() {
             onReviewRequirement={setReviewTarget}
             canTest={canTest}
             isProductManager={isProductManager}
+            currentPersonId={auth.user.personId}
           />
         ) : null}
 
@@ -593,7 +594,8 @@ function ProjectCenter({
   onReopenDefect,
   onReviewRequirement,
   canTest,
-  isProductManager
+  isProductManager,
+  currentPersonId
 }: {
   projects: Project[];
   selectedProjectId: number | null;
@@ -614,6 +616,7 @@ function ProjectCenter({
   onReviewRequirement: (requirement: Requirement) => void;
   canTest: boolean;
   isProductManager: boolean;
+  currentPersonId: number;
 }) {
   const [activeTab, setActiveTab] = useState<"requirements" | "tasks" | "defects">("requirements");
   const [keyword, setKeyword] = useState("");
@@ -624,6 +627,7 @@ function ProjectCenter({
   const defects = (detail?.defects || []) as Defect[];
   const normalizedKeyword = keyword.trim().toLowerCase();
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || detail;
+  const canEditProject = isProductManager || detail?.owner?.id === currentPersonId || detail?.ownerId === currentPersonId;
   const statusOptions = useMemo(() => {
     const source = activeTab === "requirements" ? requirements : activeTab === "tasks" ? tasks : defects;
     return Array.from(new Set(source.map((item: any) => item.status).filter(Boolean)));
@@ -693,7 +697,7 @@ function ProjectCenter({
                 <span>项目负责人<strong>{detail.owner?.name || "-"}</strong></span>
               </div>
               <div className="actions">
-                {isProductManager ? (
+                {canEditProject ? (
                   <button onClick={() => onNew("project", { editProjectId: detail.id })}>
                     <Pencil size={17} /> 编辑项目
                   </button>
