@@ -717,6 +717,196 @@ tr.due td:first-child {
   padding-top: 4px;
 }
 
+.form-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.schedule-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #dce4eb;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
+.schedule-action-row span {
+  min-width: 0;
+  color: #667884;
+  font-size: 12px;
+}
+
+.gantt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(12, 22, 27, 0.42);
+}
+
+.gantt-modal {
+  width: min(1040px, calc(100vw - 44px));
+  max-height: min(840px, calc(100vh - 44px));
+  overflow: auto;
+  border: 1px solid #cbd5df;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 28px 90px rgba(15, 31, 42, 0.28);
+}
+
+.gantt-body {
+  min-width: 760px;
+  padding: 14px 16px 16px;
+}
+
+.gantt-scale {
+  display: flex;
+  gap: 10px;
+  padding-left: 230px;
+  color: #667884;
+  font-size: 12px;
+}
+
+.gantt-scale span {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
+
+.gantt-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.gantt-row {
+  display: grid;
+  grid-template-columns: 220px minmax(420px, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.gantt-label {
+  min-width: 0;
+}
+
+.gantt-label strong,
+.unscheduled-list strong {
+  display: block;
+  overflow: hidden;
+  color: #24313c;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-label span,
+.unscheduled-list span {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: #667884;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-track {
+  position: relative;
+  height: 34px;
+  border: 1px solid #e2e9ef;
+  border-radius: 6px;
+  background: repeating-linear-gradient(90deg, #f8fafb 0, #f8fafb 80px, #eef3f6 81px);
+  overflow: visible;
+}
+
+.gantt-bar {
+  position: absolute;
+  top: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 22px;
+  min-width: 34px;
+  padding: 0 8px;
+  border-radius: 5px;
+  background: #126b73;
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.gantt-bar.defect {
+  background: #9d5b22;
+}
+
+.gantt-bar strong,
+.gantt-bar span {
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-bar:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 2;
+  width: max-content;
+  max-width: 320px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #1d2935;
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+  box-shadow: 0 10px 28px rgba(15, 31, 42, 0.22);
+}
+
+.gantt-empty {
+  margin: 16px;
+  padding: 16px;
+  border: 1px dashed #cbd5df;
+  border-radius: 6px;
+  color: #667884;
+  text-align: center;
+}
+
+.unscheduled-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e5ebf0;
+}
+
+.unscheduled-list h3 {
+  margin: 0;
+  color: #33424d;
+  font-size: 14px;
+}
+
+.unscheduled-list div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e2e9ef;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
 .schedule-target {
   display: grid;
   gap: 4px;
@@ -735,151 +925,6 @@ tr.due td:first-child {
 
 .schedule-target strong {
   color: #1d2935;
-}
-
-.priority-panel {
-  display: grid;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid #dce4eb;
-  border-radius: 6px;
-  background: #f8fafb;
-}
-
-.priority-overview {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 4px 12px;
-  align-items: center;
-}
-
-.priority-overview span,
-.priority-overview em,
-.priority-list p,
-.priority-item span {
-  color: #667884;
-  font-size: 12px;
-  font-style: normal;
-}
-
-.priority-overview strong {
-  grid-row: span 2;
-  color: #126b73;
-  font-size: 26px;
-}
-
-.compact-title {
-  padding: 0;
-  border-bottom: 0;
-  background: transparent;
-  align-items: start;
-}
-
-.compact-title h3 {
-  margin: 0;
-  font-size: 14px;
-}
-
-.workload-stats {
-  display: inline-flex;
-  gap: 7px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.workload-stats span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid #d7e3e6;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #126b73;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.priority-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.priority-list {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.priority-list-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.priority-list h4,
-.priority-list p {
-  margin: 0;
-}
-
-.priority-list h4 {
-  color: #33424d;
-  font-size: 13px;
-}
-
-.priority-list-head span {
-  color: #667884;
-  font-size: 12px;
-}
-
-.priority-table-wrap {
-  max-height: 260px;
-  overflow: auto;
-  border: 1px solid #e2e9ef;
-  border-radius: 6px;
-  background: #ffffff;
-}
-
-.priority-table {
-  min-width: 520px;
-  font-size: 12px;
-}
-
-.priority-table th,
-.priority-table td {
-  padding: 8px 9px;
-  vertical-align: top;
-}
-
-.priority-table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-.priority-table td:first-child {
-  min-width: 180px;
-}
-
-.priority-table strong,
-.priority-table span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.priority-table span {
-  margin-top: 3px;
-}
-
-.priority-score {
-  color: #126b73;
-  font-weight: 700;
-  text-align: right;
-  white-space: nowrap;
 }
 
 .draft-hint {
@@ -1010,11 +1055,29 @@ tr.due td:first-child {
   .project-summary,
   .project-info-grid,
   .project-meta-grid,
-  .priority-columns,
+  .form-inline-grid,
   .table-filters,
   .split-page,
   .login-panel {
     grid-template-columns: 1fr;
+  }
+
+  .schedule-action-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .schedule-action-row button {
+    width: 100%;
+  }
+
+  .gantt-backdrop {
+    padding: 12px;
+  }
+
+  .gantt-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
   }
 
   .topbar,

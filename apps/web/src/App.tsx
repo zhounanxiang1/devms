@@ -1,5 +1,6 @@
 import {
   Archive,
+  CalendarDays,
   CheckCircle2,
   ClipboardList,
   Gauge,
@@ -1677,111 +1678,189 @@ function personPrimaryPositionName(person?: Person | null) {
   return person?.primaryPosition?.name || person?.positions?.find((item) => item.isPrimary)?.position.name || person?.positions?.[0]?.position.name || "";
 }
 
-function RequirementPrioritySummary({ requirement }: { requirement?: Requirement | null }) {
-  return (
-    <section className="priority-overview requirement-priority">
-      <span>需求优先级分数</span>
-      <strong>{requirement?.priorityScore ?? "-"}</strong>
-      <em>{requirement ? `${requirement.title}（${requirement.code}）` : "请选择关联需求"}</em>
-    </section>
-  );
+function priorityRank(score?: number | null, tasks: DevTask[] = [], defects: Defect[] = []) {
+  if (score === undefined || score === null) return "-";
+  const existingScores = [...tasks.map((task) => task.priorityScore || 0), ...defects.map((defect) => defect.priorityScore || 0)];
+  const rank = existingScores.filter((itemScore) => itemScore > score).length + 1;
+  return `第 ${rank} / ${existingScores.length + 1} 项`;
 }
 
-function AssigneeWorkloadPanel({
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function parseDateOnly(value?: string | null) {
+  if (!value) return null;
+  const match = String(value).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function formatScheduleDate(date?: Date | null) {
+  if (!date) return "-";
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function diffDays(start: Date, end: Date) {
+  return Math.round((end.getTime() - start.getTime()) / DAY_MS);
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function normalizeScheduleRange(start?: Date | null, end?: Date | null) {
+  const normalizedStart = start || end || null;
+  const normalizedEnd = end || start || null;
+  if (!normalizedStart || !normalizedEnd) return { start: null, end: null };
+  return normalizedStart.getTime() <= normalizedEnd.getTime()
+    ? { start: normalizedStart, end: normalizedEnd }
+    : { start: normalizedEnd, end: normalizedStart };
+}
+
+type ScheduleItem = {
+  id: string;
+  kind: "task" | "defect";
+  title: string;
+  code: string;
+  status: string;
+  projectName: string;
+  sourceName: string;
+  priorityScore: number;
+  start: Date | null;
+  end: Date | null;
+};
+
+function scheduleItemsFromWork(tasks: DevTask[], defects: Defect[]): ScheduleItem[] {
+  return [
+    ...tasks.map((task) => {
+      const range = normalizeScheduleRange(parseDateOnly(task.plannedStartDate), parseDateOnly(task.plannedFinishDate));
+      return {
+        id: `task-${task.id}`,
+        kind: "task" as const,
+        title: task.title,
+        code: task.code,
+        status: task.status,
+        projectName: task.project?.name || "-",
+        sourceName: task.requirement?.title || "-",
+        priorityScore: task.priorityScore || 0,
+        start: range.start,
+        end: range.end
+      };
+    }),
+    ...defects.map((defect) => {
+      const range = normalizeScheduleRange(parseDateOnly(defect.plannedFixDate), parseDateOnly(defect.plannedFixDate));
+      return {
+        id: `defect-${defect.id}`,
+        kind: "defect" as const,
+        title: defect.title,
+        code: defect.code,
+        status: defect.status,
+        projectName: defect.project?.name || defect.task?.project?.name || "-",
+        sourceName: defect.task?.title || "-",
+        priorityScore: defect.priorityScore || 0,
+        start: range.start,
+        end: range.end
+      };
+    })
+  ].sort((left, right) => {
+    if (left.start && right.start) return left.start.getTime() - right.start.getTime() || (right.priorityScore || 0) - (left.priorityScore || 0);
+    if (left.start) return -1;
+    if (right.start) return 1;
+    return (right.priorityScore || 0) - (left.priorityScore || 0);
+  });
+}
+
+function scheduleTicks(start: Date, end: Date) {
+  const totalDays = Math.max(1, diffDays(start, end));
+  const step = Math.max(1, Math.ceil(totalDays / 6));
+  const ticks: Date[] = [];
+  for (let offset = 0; offset <= totalDays; offset += step) {
+    ticks.push(addDays(start, offset));
+  }
+  if (ticks[ticks.length - 1].getTime() !== end.getTime()) ticks.push(end);
+  return ticks;
+}
+
+function AssigneeScheduleDialog({
   assigneeName,
-  assigneeTasks,
-  assigneeDefects
+  tasks,
+  defects,
+  onClose
 }: {
   assigneeName?: string;
-  assigneeTasks: DevTask[];
-  assigneeDefects: Defect[];
+  tasks: DevTask[];
+  defects: Defect[];
+  onClose: () => void;
 }) {
-  return (
-    <section className="priority-panel">
-      <div className="section-title compact-title">
-        <div>
-          <h3>{assigneeName || "未选择负责人"}</h3>
-          <span className="section-note">完整展示当前待处理开发任务和缺陷修复，按优先级分数倒序。</span>
-        </div>
-        <div className="workload-stats">
-          <span>开发 {assigneeTasks.length}</span>
-          <span>缺陷 {assigneeDefects.length}</span>
-        </div>
-      </div>
-      <div className="priority-columns">
-        <PriorityItems
-          title="开发任务"
-          emptyText="暂无开发任务"
-          items={assigneeTasks.map((task) => ({
-            id: task.id,
-            title: task.title,
-            meta: `${task.project?.name || "-"} / ${task.requirement?.title || "-"}`,
-            status: task.status,
-            plannedAt: fmtDate(task.plannedFinishDate),
-            priorityScore: task.priorityScore
-          }))}
-        />
-        <PriorityItems
-          title="缺陷修复"
-          emptyText="暂无缺陷修复"
-          items={assigneeDefects.map((defect) => ({
-            id: defect.id,
-            title: defect.title,
-            meta: `${defect.project?.name || "-"} / ${defect.task?.title || "-"}`,
-            status: defect.status,
-            plannedAt: fmtDate(defect.plannedFixDate),
-            priorityScore: defect.priorityScore
-          }))}
-        />
-      </div>
-    </section>
-  );
-}
+  const items = scheduleItemsFromWork(tasks, defects);
+  const scheduledItems = items.filter((item) => item.start && item.end);
+  const unscheduledItems = items.filter((item) => !item.start || !item.end);
+  const minStart = scheduledItems.reduce<Date | null>((min, item) => (!min || (item.start && item.start < min) ? item.start : min), null);
+  const maxEnd = scheduledItems.reduce<Date | null>((max, item) => (!max || (item.end && item.end > max) ? item.end : max), null);
+  const totalDays = minStart && maxEnd ? Math.max(1, diffDays(minStart, maxEnd) + 1) : 1;
+  const ticks = minStart && maxEnd ? scheduleTicks(minStart, maxEnd) : [];
 
-function PriorityItems({
-  title,
-  emptyText,
-  items
-}: {
-  title: string;
-  emptyText: string;
-  items: Array<{ id: number; title: string; meta: string; status: string; plannedAt: string; priorityScore: number }>;
-}) {
   return (
-    <div className="priority-list">
-      <div className="priority-list-head">
-        <h4>{title}</h4>
-        <span>{items.length} 项</span>
-      </div>
-      {items.length ? (
-        <div className="priority-table-wrap">
-          <table className="priority-table">
-            <thead>
-              <tr>
-                <th>事项</th>
-                <th>状态</th>
-                <th>计划</th>
-                <th>优先级</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <strong>{item.title}</strong>
-                    <span>{item.meta}</span>
-                  </td>
-                  <td><Badge value={label(item.status)} /></td>
-                  <td>{item.plannedAt}</td>
-                  <td className="priority-score">{item.priorityScore}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <div className="gantt-backdrop">
+      <aside className="gantt-modal">
+        <div className="section-title">
+          <div>
+            <h2>{assigneeName || "未选择负责人"}的排期情况</h2>
+            <span className="section-note">开发任务 {tasks.length} 项，缺陷修复 {defects.length} 项；鼠标移入条形可查看任务名称和优先级分数。</span>
+          </div>
+          <button className="ghost" type="button" onClick={onClose}>关闭</button>
         </div>
-      ) : (
-        <p>{emptyText}</p>
-      )}
+        {scheduledItems.length ? (
+          <div className="gantt-body">
+            <div className="gantt-scale">
+              {ticks.map((tick) => (
+                <span key={tick.toISOString()}>{formatScheduleDate(tick)}</span>
+              ))}
+            </div>
+            <div className="gantt-list">
+              {scheduledItems.map((item) => {
+                const left = minStart && item.start ? Math.max(0, (diffDays(minStart, item.start) / totalDays) * 100) : 0;
+                const rawWidth = item.start && item.end ? ((diffDays(item.start, item.end) + 1) / totalDays) * 100 : 0;
+                const width = Math.min(100 - left, Math.max(3, rawWidth));
+                const tooltip = `${item.title}｜优先级分数：${item.priorityScore}`;
+                return (
+                  <div className="gantt-row" key={item.id}>
+                    <div className="gantt-label">
+                      <strong>{item.title}</strong>
+                      <span>{item.kind === "task" ? "开发任务" : "缺陷修复"} · {label(item.status)} · {item.projectName} / {item.sourceName}</span>
+                    </div>
+                    <div className="gantt-track">
+                      <div
+                        className={`gantt-bar ${item.kind === "defect" ? "defect" : "task"}`}
+                        style={{ left: `${left}%`, width: `${width}%` }}
+                        title={tooltip}
+                        data-tooltip={tooltip}
+                      >
+                        <strong>{item.code}</strong>
+                        <span>{item.priorityScore}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="gantt-empty">暂无已排期事项</div>
+        )}
+        {unscheduledItems.length ? (
+          <div className="unscheduled-list">
+            <h3>未排期事项</h3>
+            {unscheduledItems.map((item) => (
+              <div key={item.id}>
+                <strong>{item.title}</strong>
+                <span>{item.kind === "task" ? "开发任务" : "缺陷修复"} · {label(item.status)} · 优先级分数 {item.priorityScore}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </aside>
     </div>
   );
 }
@@ -1838,6 +1917,7 @@ function CreateDrawer({
   const [draftStamp, setDraftStamp] = useState(0);
   const [versionProjectId, setVersionProjectId] = useState("");
   const [taskAssigneeId, setTaskAssigneeId] = useState(String(currentPersonId || ""));
+  const [scheduleViewOpen, setScheduleViewOpen] = useState(false);
   const openProjectFallbackId = projects.find((project) => project.stage !== "CLOSED")?.id || "";
   useEffect(() => {
     setDraftMessage("");
@@ -1852,6 +1932,9 @@ function CreateDrawer({
       setTaskAssigneeId(String(draftValue(draft, "assigneeId", currentPersonId) || ""));
     }
   }, [kind, draftKey, currentPersonId]);
+  useEffect(() => {
+    if (kind !== "task") setScheduleViewOpen(false);
+  }, [kind]);
   if (!activeKind) return null;
   const activeDrawerKind = activeKind;
   const selectedProject = context.projectId ? projects.find((project) => project.id === context.projectId) : null;
@@ -1891,6 +1974,7 @@ function CreateDrawer({
   const assigneeDefects = defects
     .filter((defect) => defect.assignee?.id === taskAssigneeNumberId && !["VERIFIED", "CLOSED"].includes(defect.status))
     .sort((left, right) => (right.priorityScore || 0) - (left.priorityScore || 0));
+  const selectedRequirementPriorityRank = priorityRank(selectedRequirement?.priorityScore, assigneeTasks, assigneeDefects);
   const titles: Record<Exclude<DrawerKind, null>, string> = {
     project: "新建项目",
     requirement: "新建需求",
@@ -1936,8 +2020,9 @@ function CreateDrawer({
   }
 
   return (
-    <div className="drawer-backdrop">
-      <aside className="drawer">
+    <>
+      <div className="drawer-backdrop">
+        <aside className="drawer">
         <div className="section-title">
           <h2>{activeDrawerKind === "project" && editingProject ? "编辑项目" : activeDrawerKind === "requirement" && context.revisionMode ? (context.revisionMode === "OPTIMIZATION" ? "需求优化" : "需求变更") : titles[activeDrawerKind]}</h2>
           <button className="ghost" onClick={onClose}>关闭</button>
@@ -1983,7 +2068,10 @@ function CreateDrawer({
                 <>
                   {contextProject ? <ReadonlyField name="projectId" label="所属项目" value={contextProject.id} displayValue={`${contextProject.name}（${contextProject.code}）`} /> : null}
                   <ReadonlyField name="requirementId" label="关联需求" value={selectedRequirement.id} displayValue={`${selectedRequirement.title}（${selectedRequirement.code}）`} />
-                  <RequirementPrioritySummary requirement={selectedRequirement} />
+                  <div className="form-inline-grid">
+                    <DisplayField label="需求优先级分数" value={selectedRequirement.priorityScore} />
+                    <DisplayField label="优先级排序" value={selectedRequirementPriorityRank} />
+                  </div>
                 </>
               ) : (
                 <Select name="requirementId" label="关联需求" options={selectableTaskRequirements.map((item) => [String(item.id), item.title])} defaultValue={draftValue(draft, "requirementId")} />
@@ -1991,7 +2079,12 @@ function CreateDrawer({
               <Field name="title" label="任务标题" required defaultValue={draftValue(draft, "title")} />
               <Select name="assigneeId" label="负责人" options={people.map((person) => [String(person.id), person.name])} value={taskAssigneeId} onChange={setTaskAssigneeId} />
               <ReadonlyField name="type" label="任务类型（由负责人岗位带出）" value={taskTypeCode} displayValue={taskTypeName} />
-              <AssigneeWorkloadPanel assigneeName={selectedTaskAssignee?.name} assigneeTasks={assigneeTasks} assigneeDefects={assigneeDefects} />
+              <div className="schedule-action-row">
+                <button type="button" onClick={() => setScheduleViewOpen(true)} disabled={!selectedTaskAssignee}>
+                  <CalendarDays size={18} /> 查看排期情况
+                </button>
+                <span>{selectedTaskAssignee ? `查看${selectedTaskAssignee.name}当前开发任务和缺陷修复排期` : "请选择负责人后查看排期情况"}</span>
+              </div>
               <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate", todayDateInput())} />
               <Field name="plannedFinishDate" label="计划完成时间" type="date" defaultValue={draftValue(draft, "plannedFinishDate")} />
             </>
@@ -2059,7 +2152,16 @@ function CreateDrawer({
             </button>
           </div>
         </form>
-      </aside>
-    </div>
+        </aside>
+      </div>
+      {activeDrawerKind === "task" && scheduleViewOpen ? (
+        <AssigneeScheduleDialog
+          assigneeName={selectedTaskAssignee?.name}
+          tasks={assigneeTasks}
+          defects={assigneeDefects}
+          onClose={() => setScheduleViewOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
