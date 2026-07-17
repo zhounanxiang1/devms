@@ -1699,8 +1699,14 @@ function AssigneeWorkloadPanel({
   return (
     <section className="priority-panel">
       <div className="section-title compact-title">
-        <h3>{assigneeName || "未选择负责人"}</h3>
-        <span className="section-note">当前开发任务和缺陷修复的优先级分数</span>
+        <div>
+          <h3>{assigneeName || "未选择负责人"}</h3>
+          <span className="section-note">完整展示当前待处理开发任务和缺陷修复，按优先级分数倒序。</span>
+        </div>
+        <div className="workload-stats">
+          <span>开发 {assigneeTasks.length}</span>
+          <span>缺陷 {assigneeDefects.length}</span>
+        </div>
       </div>
       <div className="priority-columns">
         <PriorityItems
@@ -1711,6 +1717,7 @@ function AssigneeWorkloadPanel({
             title: task.title,
             meta: `${task.project?.name || "-"} / ${task.requirement?.title || "-"}`,
             status: task.status,
+            plannedAt: fmtDate(task.plannedFinishDate),
             priorityScore: task.priorityScore
           }))}
         />
@@ -1722,6 +1729,7 @@ function AssigneeWorkloadPanel({
             title: defect.title,
             meta: `${defect.project?.name || "-"} / ${defect.task?.title || "-"}`,
             status: defect.status,
+            plannedAt: fmtDate(defect.plannedFixDate),
             priorityScore: defect.priorityScore
           }))}
         />
@@ -1737,23 +1745,39 @@ function PriorityItems({
 }: {
   title: string;
   emptyText: string;
-  items: Array<{ id: number; title: string; meta: string; status: string; priorityScore: number }>;
+  items: Array<{ id: number; title: string; meta: string; status: string; plannedAt: string; priorityScore: number }>;
 }) {
   return (
     <div className="priority-list">
-      <h4>{title}</h4>
+      <div className="priority-list-head">
+        <h4>{title}</h4>
+        <span>{items.length} 项</span>
+      </div>
       {items.length ? (
-        <div className="priority-items">
-          {items.map((item) => (
-            <div key={item.id} className="priority-item">
-              <div>
-                <strong>{item.title}</strong>
-                <span>{item.meta}</span>
-                <Badge value={label(item.status)} />
-              </div>
-              <em>{item.priorityScore}</em>
-            </div>
-          ))}
+        <div className="priority-table-wrap">
+          <table className="priority-table">
+            <thead>
+              <tr>
+                <th>事项</th>
+                <th>状态</th>
+                <th>计划</th>
+                <th>优先级</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td>
+                    <strong>{item.title}</strong>
+                    <span>{item.meta}</span>
+                  </td>
+                  <td><Badge value={label(item.status)} /></td>
+                  <td>{item.plannedAt}</td>
+                  <td className="priority-score">{item.priorityScore}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <p>{emptyText}</p>

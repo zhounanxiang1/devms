@@ -739,7 +739,7 @@ tr.due td:first-child {
 
 .priority-panel {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   padding: 12px;
   border: 1px solid #dce4eb;
   border-radius: 6px;
@@ -780,17 +780,43 @@ tr.due td:first-child {
   font-size: 14px;
 }
 
+.workload-stats {
+  display: inline-flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.workload-stats span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid #d7e3e6;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #126b73;
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .priority-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 10px;
+  gap: 12px;
 }
 
 .priority-list {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.priority-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .priority-list h4,
@@ -803,41 +829,57 @@ tr.due td:first-child {
   font-size: 13px;
 }
 
-.priority-items {
-  display: grid;
-  gap: 7px;
-  max-height: 220px;
-  overflow: auto;
+.priority-list-head span {
+  color: #667884;
+  font-size: 12px;
 }
 
-.priority-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: start;
-  padding: 9px;
+.priority-table-wrap {
+  max-height: 260px;
+  overflow: auto;
   border: 1px solid #e2e9ef;
   border-radius: 6px;
   background: #ffffff;
 }
 
-.priority-item div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
+.priority-table {
+  min-width: 520px;
+  font-size: 12px;
 }
 
-.priority-item strong,
-.priority-item span {
+.priority-table th,
+.priority-table td {
+  padding: 8px 9px;
+  vertical-align: top;
+}
+
+.priority-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.priority-table td:first-child {
+  min-width: 180px;
+}
+
+.priority-table strong,
+.priority-table span {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.priority-item em {
+.priority-table span {
+  margin-top: 3px;
+}
+
+.priority-score {
   color: #126b73;
-  font-style: normal;
   font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .draft-hint {
