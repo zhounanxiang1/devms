@@ -698,6 +698,10 @@ tr.due td:first-child {
   overflow-y: auto;
 }
 
+.compact-drawer {
+  width: min(460px, 100vw);
+}
+
 .drawer-form {
   padding: 16px;
 }
@@ -707,6 +711,26 @@ tr.due td:first-child {
   justify-content: flex-end;
   gap: 8px;
   padding-top: 4px;
+}
+
+.schedule-target {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #dce4eb;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
+.schedule-target span,
+.schedule-target em {
+  color: #667884;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.schedule-target strong {
+  color: #1d2935;
 }
 
 .draft-hint {

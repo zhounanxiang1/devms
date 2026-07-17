@@ -1,14 +1,10 @@
 import {
   Archive,
-  Bold,
   CheckCircle2,
   ClipboardList,
   Gauge,
-  Italic,
   LayoutDashboard,
-  List,
   ListChecks,
-  ListOrdered,
   LogOut,
   PackageCheck,
   Pencil,
@@ -19,8 +15,16 @@ import {
   Trash2,
   Users
 } from "lucide-react";
-import { FormEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, MouseEvent, useEffect, useMemo, useState } from "react";
 import { api, clearToken, getToken, patch, post, setToken } from "./api";
+import { Badge, EmptyState, ListSection, Metric } from "./components/common";
+import { Field, MultiSelect, PeopleSelect, ProjectSelect, ReadonlyField, Select, Textarea } from "./components/formControls";
+import { RichTextDisplay, RichTextEditor } from "./components/RichText";
+import { ScheduleDialog, ScheduleEditState } from "./components/ScheduleDialog";
+import { clearFormDraft, draftArray, draftValue, FORM_DRAFT_PREFIX, hasDraftValues, readFormDraft, writeFormDraft } from "./lib/formDraft";
+import { dictionaryOptions, dictionaryTypeLabel, dictionaryTypeUsage, fmtDate, isDue, isProductManagerPerson, label, projectStageLabel, toDateInput, todayDateInput } from "./lib/format";
+import { dictionaryTypeMeta } from "./lib/labels";
+import { stripRichText } from "./lib/richText";
 import { Account, AdminData, AuthState, Defect, DevTask, Organization, Person, Position, Project, ReleaseVersion, Requirement } from "./types";
 
 type View = "workbench" | "projects" | "execution" | "release" | "admin";
@@ -28,268 +32,7 @@ type DrawerKind = "project" | "requirement" | "task" | "defect" | "version" | "d
 type DrawerContext = { projectId?: number; requirementId?: number; taskId?: number; editProjectId?: number; revisionMode?: "CHANGE" | "OPTIMIZATION" };
 type AdminEditKind = "personAccount" | "organization" | "position" | "dictionary" | "requirementPriority" | "defectPriority";
 type AdminEditState = { kind: AdminEditKind; item?: any } | null;
-type FormDraft = Record<string, string | string[]>;
-
-const statusLabels: Record<string, string> = {
-  TO_REVIEW: "待评审",
-  APPROVED: "评审通过",
-  REJECTED: "评审不通过",
-  NEEDS_SUPPLEMENT: "待补充",
-  DEFERRED: "暂缓",
-  DEVELOPING: "开发中",
-  TESTING: "测试中",
-  READY_TO_RELEASE: "待上线",
-  RELEASED: "已上线",
-  COMPLETED: "已完成",
-  CANCELED: "已取消",
-  CHANGE: "需求变更",
-  OPTIMIZATION: "需求优化",
-  TO_RELEASE: "待上线",
-  TODO: "待处理",
-  DOING: "处理中",
-  TO_TEST: "待测试",
-  TEST_PASSED: "测试通过",
-  DONE: "已完成",
-  BLOCKED: "已阻塞",
-  TO_ASSIGN: "待分配",
-  TO_FIX: "待修复",
-  FIXING: "修复中",
-  FIXED: "已修复",
-  TO_VERIFY: "待验证",
-  VERIFIED: "已验证",
-  CLOSED: "已关闭",
-  REOPENED: "重新打开",
-  PLANNING: "规划中",
-  ROLLED_BACK: "已回滚",
-  ACTIVE: "启用",
-  DISABLED: "停用",
-  LOCKED: "锁定",
-  LEFT: "离职"
-};
-
-const positionLabels: Record<string, string> = {
-  PRODUCT_MANAGER: "产品经理",
-  UI: "UI",
-  FRONTEND: "前端",
-  BACKEND: "后端",
-  DATA: "数据",
-  TEST: "测试",
-  OPS: "运维",
-  BUSINESS: "业务"
-};
-
-const projectStageLabels: Record<string, string> = {
-  INITIATED: "已立项",
-  RESEARCHING: "需求调研",
-  SOLUTION_DESIGN: "方案设计",
-  DEV_TEST: "系统开发与测试",
-  ONLINE_OPS: "上线运维",
-  CLOSED: "已结项"
-};
-
-const dictionaryTypeMeta: Record<string, { name: string; usage: string }> = {
-  PROJECT_STAGE: {
-    name: "项目阶段",
-    usage: "用于项目中心的阶段展示和编辑；新建项目默认已立项，不在新建表单中手动选择，项目创建后可在编辑项目时维护。"
-  },
-  REQUIREMENT_STATUS: {
-    name: "需求状态",
-    usage: "用于需求评审、开发、完成、取消、变更、优化等主流程状态展示和流转。上线相关状态请维护“需求上线状态”。"
-  },
-  REQUIREMENT_LAUNCH_STATUS: {
-    name: "需求上线状态",
-    usage: "用于标记需求是否已随版本发布上线。它和需求主状态分开，主状态表示评审、开发完成、变更或优化，上线状态只表示待上线/已上线。"
-  },
-  REQUIREMENT_TYPE: {
-    name: "需求类型",
-    usage: "用于新建需求时选择功能、流程、数据、报表、体验优化等分类。"
-  },
-  TASK_STATUS: {
-    name: "开发任务状态",
-    usage: "用于开发任务列表、工作台待办、完成/阻塞等任务状态展示。"
-  },
-  TASK_TYPE: {
-    name: "开发任务类型",
-    usage: "用于拆解任务时选择 UI、前端、后端、数据、测试等工作类型。"
-  },
-  DEFECT_STATUS: {
-    name: "缺陷状态",
-    usage: "用于缺陷记录、缺陷修复待办、验证通过、版本发布拦截。"
-  },
-  VERSION_STATUS: {
-    name: "版本状态",
-    usage: "用于发布中心展示版本从规划、待发布到已发布/回滚的状态。"
-  },
-  VERSION_TYPE: {
-    name: "版本类型",
-    usage: "用于新建版本时选择常规版本、紧急修复、灰度版本等类型。"
-  },
-  DOCUMENT_TYPE: {
-    name: "资料类型",
-    usage: "用于项目资料归档时区分业务、技术、测试、上线资料。"
-  }
-};
-
-function fmtDate(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleDateString("zh-CN");
-}
-
-function label(code?: string) {
-  if (!code) return "-";
-  return statusLabels[code] || positionLabels[code] || code;
-}
-
-function projectStageLabel(code?: string) {
-  if (!code) return "-";
-  return projectStageLabels[code] || label(code);
-}
-
-function dictionaryTypeLabel(type: string) {
-  const meta = dictionaryTypeMeta[type];
-  return meta ? `${meta.name}（${type}）` : type;
-}
-
-function dictionaryTypeUsage(type: string) {
-  return dictionaryTypeMeta[type]?.usage || "自定义字典类型。用于系统配置项扩展，具体使用位置需结合业务页面确认。";
-}
-
-function toDateInput(value?: string | null) {
-  if (!value) return "";
-  return String(value).slice(0, 10);
-}
-
-function todayDateInput() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function isDue(value?: string) {
-  if (!value) return false;
-  return new Date(value).getTime() - Date.now() < 1000 * 60 * 60 * 24 * 2;
-}
-
-function isProductManagerPerson(person?: Pick<Person, "primaryPosition" | "positions"> | null) {
-  return person?.primaryPosition?.code === "PRODUCT_MANAGER" || Boolean(person?.positions?.some((item) => item.position.code === "PRODUCT_MANAGER"));
-}
-
-function dictionaryOptions(
-  dictionaries: AdminData["dictionaries"],
-  type: string,
-  fallback: Array<[string, string]>
-) {
-  const options = dictionaries
-    .filter((item) => item.type === type && item.isActive)
-    .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
-    .map((item) => [item.code, item.name] as [string, string]);
-  return options.length ? options : fallback;
-}
-
-const FORM_DRAFT_PREFIX = "dms_form_draft";
-
-function readFormDraft(key: string): FormDraft | null {
-  if (!key) return null;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const candidate = "values" in parsed ? (parsed as { values?: unknown }).values : parsed;
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
-    return candidate as FormDraft;
-  } catch {
-    return null;
-  }
-}
-
-function writeFormDraft(key: string, form: HTMLFormElement) {
-  const values: FormDraft = {};
-  const passwordFields = new Set(
-    Array.from(form.querySelectorAll<HTMLInputElement>('input[type="password"]')).map((input) => input.name).filter(Boolean)
-  );
-  new FormData(form).forEach((value, name) => {
-    if (passwordFields.has(name) || typeof value !== "string") return;
-    const existing = values[name];
-    if (existing === undefined) {
-      values[name] = value;
-    } else if (Array.isArray(existing)) {
-      existing.push(value);
-    } else {
-      values[name] = [existing, value];
-    }
-  });
-  window.localStorage.setItem(key, JSON.stringify({ savedAt: new Date().toISOString(), values }));
-}
-
-function clearFormDraft(key: string) {
-  if (key) window.localStorage.removeItem(key);
-}
-
-function draftValue(draft: FormDraft | null, name: string, fallback?: string | number | null) {
-  const value = draft?.[name];
-  if (Array.isArray(value)) return value[0] ?? "";
-  return value ?? fallback ?? "";
-}
-
-function draftArray(draft: FormDraft | null, name: string) {
-  const value = draft?.[name];
-  if (Array.isArray(value)) return value;
-  return value ? [value] : [];
-}
-
-function hasDraftValues(draft: FormDraft | null) {
-  return Boolean(draft && Object.keys(draft).length);
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function stripRichText(value?: string | number | null) {
-  if (!value) return "";
-  if (typeof document === "undefined") return String(value).replace(/<[^>]+>/g, "").trim();
-  const container = document.createElement("div");
-  container.innerHTML = String(value);
-  return (container.textContent || "").trim();
-}
-
-function sanitizeRichTextHtml(value?: string | number | null) {
-  if (!value) return "";
-  const raw = String(value);
-  if (typeof document === "undefined") return raw;
-  const template = document.createElement("template");
-  template.innerHTML = raw;
-  const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "BR", "P", "DIV", "UL", "OL", "LI", "SPAN"]);
-  const cleanNode = (node: Node) => {
-    Array.from(node.childNodes).forEach(cleanNode);
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
-    const element = node as HTMLElement;
-    Array.from(element.attributes).forEach((attribute) => element.removeAttribute(attribute.name));
-    if (!allowedTags.has(element.tagName)) {
-      element.replaceWith(...Array.from(element.childNodes));
-    }
-  };
-  cleanNode(template.content);
-  return template.innerHTML.trim();
-}
-
-function normalizeRichText(value?: string | number | null) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return "";
-  if (/<[a-z][\s\S]*>/i.test(raw)) return sanitizeRichTextHtml(raw);
-  return raw
-    .split(/\n{2,}/)
-    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
-    .join("");
-}
+type RefreshTarget = "all" | "workbench" | "project" | "execution" | "release" | "admin";
 
 export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
@@ -309,6 +52,7 @@ export function App() {
   const [admin, setAdmin] = useState<AdminData | null>(null);
   const [adminEdit, setAdminEdit] = useState<AdminEditState>(null);
   const [reviewTarget, setReviewTarget] = useState<Requirement | null>(null);
+  const [scheduleEdit, setScheduleEdit] = useState<ScheduleEditState | null>(null);
 
   const isProductManager = auth?.user.positions.includes("PRODUCT_MANAGER") || false;
   const canPublish = auth?.user.positions.some((item) => item === "PRODUCT_MANAGER" || item === "TEST") || false;
@@ -339,27 +83,103 @@ export function App() {
 
   async function loadAll() {
     setError("");
-    const [wb, ps, reqs, ts, bugs, vers] = await Promise.all([
-      api<any>("/workbench"),
-      api<Project[]>("/projects"),
-      api<Requirement[]>("/requirements"),
-      api<DevTask[]>("/tasks"),
-      api<Defect[]>("/defects"),
-      api<ReleaseVersion[]>("/versions")
-    ]);
-    setWorkbench(wb);
-    setProjects(ps);
-    setRequirements(reqs);
-    setTasks(ts);
-    setDefects(bugs);
-    setVersions(vers);
-    if (!selectedProjectId && ps[0]) setSelectedProjectId(ps[0].id);
-    if (isProductManager) {
-      try {
-        setAdmin(await api<AdminData>("/admin/bootstrap"));
-      } catch {
-        setAdmin(null);
-      }
+    await refreshData("all");
+  }
+
+  async function refreshAdminData() {
+    if (!isProductManager) {
+      setAdmin(null);
+      return;
+    }
+    try {
+      setAdmin(await api<AdminData>("/admin/bootstrap"));
+    } catch {
+      setAdmin(null);
+    }
+  }
+
+  async function refreshSelectedProjectDetail(projectId = selectedProjectId) {
+    if (!projectId) {
+      setProjectDetail(null);
+      return;
+    }
+    try {
+      setProjectDetail(await api<any>(`/projects/${projectId}`));
+    } catch {
+      setProjectDetail(null);
+    }
+  }
+
+  async function refreshData(target: RefreshTarget = "all") {
+    const currentProjectId = selectedProjectId;
+    if (target === "all") {
+      const [wb, ps, reqs, ts, bugs, vers] = await Promise.all([
+        api<any>("/workbench"),
+        api<Project[]>("/projects"),
+        api<Requirement[]>("/requirements"),
+        api<DevTask[]>("/tasks"),
+        api<Defect[]>("/defects"),
+        api<ReleaseVersion[]>("/versions")
+      ]);
+      setWorkbench(wb);
+      setProjects(ps);
+      setRequirements(reqs);
+      setTasks(ts);
+      setDefects(bugs);
+      setVersions(vers);
+      const nextProjectId = currentProjectId || ps[0]?.id || null;
+      if (!currentProjectId && nextProjectId) setSelectedProjectId(nextProjectId);
+      await Promise.all([refreshAdminData(), refreshSelectedProjectDetail(nextProjectId)]);
+      return;
+    }
+    if (target === "project") {
+      const [ps, reqs, ts, bugs, wb] = await Promise.all([
+        api<Project[]>("/projects"),
+        api<Requirement[]>("/requirements"),
+        api<DevTask[]>("/tasks"),
+        api<Defect[]>("/defects"),
+        api<any>("/workbench")
+      ]);
+      setProjects(ps);
+      setRequirements(reqs);
+      setTasks(ts);
+      setDefects(bugs);
+      setWorkbench(wb);
+      const nextProjectId = currentProjectId || ps[0]?.id || null;
+      if (!currentProjectId && nextProjectId) setSelectedProjectId(nextProjectId);
+      await refreshSelectedProjectDetail(nextProjectId);
+      return;
+    }
+    if (target === "execution") {
+      const [wb, ts, bugs] = await Promise.all([
+        api<any>("/workbench"),
+        api<DevTask[]>("/tasks"),
+        api<Defect[]>("/defects")
+      ]);
+      setWorkbench(wb);
+      setTasks(ts);
+      setDefects(bugs);
+      await refreshSelectedProjectDetail();
+      return;
+    }
+    if (target === "release") {
+      const [vers, reqs, bugs] = await Promise.all([
+        api<ReleaseVersion[]>("/versions"),
+        api<Requirement[]>("/requirements"),
+        api<Defect[]>("/defects")
+      ]);
+      setVersions(vers);
+      setRequirements(reqs);
+      setDefects(bugs);
+      await refreshSelectedProjectDetail();
+      return;
+    }
+    if (target === "admin") {
+      await refreshAdminData();
+      return;
+    }
+    if (target === "workbench") {
+      setWorkbench(await api<any>("/workbench"));
     }
   }
 
@@ -387,15 +207,12 @@ export function App() {
     }
   }
 
-  async function handleAction(action: () => Promise<unknown>) {
+  async function handleAction(action: () => Promise<unknown>, refreshTarget: RefreshTarget = "all") {
     setBusy(true);
     setError("");
     try {
       await action();
-      await loadAll();
-      if (selectedProjectId) {
-        setProjectDetail(await api<any>(`/projects/${selectedProjectId}`));
-      }
+      await refreshData(refreshTarget);
       closeDrawer();
       return true;
     } catch (err: any) {
@@ -485,20 +302,20 @@ export function App() {
           <Workbench
             data={workbench}
             positions={auth.user.positions}
-            onEditTask={(task) => setDrawerForSchedule("task", task)}
-            onEditDefect={(defect) => setDrawerForSchedule("defect", defect)}
-            onStartTask={(task) => handleAction(() => post(`/tasks/${task.id}/start`, {}))}
-            onCompleteTask={(task) => handleAction(() => post(`/tasks/${task.id}/complete`, { completionNote: "工作台处理完成" }))}
-            onStartTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-start`, {}))}
-            onPassTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-pass`, { note: "工作台测试通过" }))}
-            onCloseTask={(task) => handleAction(() => post(`/tasks/${task.id}/close`, { note: "工作台手动关闭" }))}
-            onStartDefectFix={(defect) => handleAction(() => post(`/defects/${defect.id}/start-fix`, {}))}
-            onCompleteDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/fix-complete`, { fixNote: "工作台完成修复" }))}
+            onEditTask={(task) => setScheduleEdit({ type: "task", item: task })}
+            onEditDefect={(defect) => setScheduleEdit({ type: "defect", item: defect })}
+            onStartTask={(task) => handleAction(() => post(`/tasks/${task.id}/start`, {}), "execution")}
+            onCompleteTask={(task) => handleAction(() => post(`/tasks/${task.id}/complete`, { completionNote: "工作台处理完成" }), "execution")}
+            onStartTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-start`, {}), "execution")}
+            onPassTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-pass`, { note: "工作台测试通过" }), "execution")}
+            onCloseTask={(task) => handleAction(() => post(`/tasks/${task.id}/close`, { note: "工作台手动关闭" }), "execution")}
+            onStartDefectFix={(defect) => handleAction(() => post(`/defects/${defect.id}/start-fix`, {}), "execution")}
+            onCompleteDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/fix-complete`, { fixNote: "工作台完成修复" }), "execution")}
             canVerify={canTest}
-            onVerifyDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/verify`, { verifyNote: "验证通过" }))}
-            onRejectDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reject`, { reason: "验证未通过" }))}
-            onCloseDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/close`, { reason: "手动关闭" }))}
-            onReopenDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reopen`, { reason: "重新开启" }))}
+            onVerifyDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/verify`, { verifyNote: "验证通过" }), "execution")}
+            onRejectDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reject`, { reason: "验证未通过" }), "execution")}
+            onCloseDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/close`, { reason: "手动关闭" }), "execution")}
+            onReopenDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reopen`, { reason: "重新开启" }), "execution")}
             isProductManager={isProductManager}
           />
         ) : null}
@@ -510,17 +327,17 @@ export function App() {
             onSelect={setSelectedProjectId}
             detail={projectDetail}
             onNew={openDrawer}
-            onStartTask={(task) => handleAction(() => post(`/tasks/${task.id}/start`, {}))}
-            onCompleteTask={(task) => handleAction(() => post(`/tasks/${task.id}/complete`, { completionNote: "项目中心处理完成" }))}
-            onStartTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-start`, {}))}
-            onPassTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-pass`, { note: "项目中心测试通过" }))}
-            onCloseTask={(task) => handleAction(() => post(`/tasks/${task.id}/close`, { note: "项目中心手动关闭" }))}
-            onStartDefectFix={(defect) => handleAction(() => post(`/defects/${defect.id}/start-fix`, {}))}
-            onCompleteDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/fix-complete`, { fixNote: "项目中心完成修复" }))}
-            onVerifyDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/verify`, { verifyNote: "验证通过" }))}
-            onRejectDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reject`, { reason: "验证未通过" }))}
-            onCloseDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/close`, { reason: "手动关闭" }))}
-            onReopenDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reopen`, { reason: "重新开启" }))}
+            onStartTask={(task) => handleAction(() => post(`/tasks/${task.id}/start`, {}), "project")}
+            onCompleteTask={(task) => handleAction(() => post(`/tasks/${task.id}/complete`, { completionNote: "项目中心处理完成" }), "project")}
+            onStartTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-start`, {}), "project")}
+            onPassTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-pass`, { note: "项目中心测试通过" }), "project")}
+            onCloseTask={(task) => handleAction(() => post(`/tasks/${task.id}/close`, { note: "项目中心手动关闭" }), "project")}
+            onStartDefectFix={(defect) => handleAction(() => post(`/defects/${defect.id}/start-fix`, {}), "project")}
+            onCompleteDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/fix-complete`, { fixNote: "项目中心完成修复" }), "project")}
+            onVerifyDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/verify`, { verifyNote: "验证通过" }), "project")}
+            onRejectDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reject`, { reason: "验证未通过" }), "project")}
+            onCloseDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/close`, { reason: "手动关闭" }), "project")}
+            onReopenDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reopen`, { reason: "重新开启" }), "project")}
             onReviewRequirement={setReviewTarget}
             canTest={canTest}
             isProductManager={isProductManager}
@@ -531,24 +348,24 @@ export function App() {
           <ExecutionCenter
             tasks={tasks}
             defects={defects}
-            onStartTask={(task) => handleAction(() => post(`/tasks/${task.id}/start`, {}))}
-            onCompleteTask={(task) => handleAction(() => post(`/tasks/${task.id}/complete`, { completionNote: "执行中心处理完成" }))}
-            onStartTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-start`, {}))}
-            onPassTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-pass`, { note: "执行中心测试通过" }))}
-            onCloseTask={(task) => handleAction(() => post(`/tasks/${task.id}/close`, { note: "执行中心手动关闭" }))}
-            onStartDefectFix={(defect) => handleAction(() => post(`/defects/${defect.id}/start-fix`, {}))}
-            onCompleteDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/fix-complete`, { fixNote: "执行中心完成修复" }))}
+            onStartTask={(task) => handleAction(() => post(`/tasks/${task.id}/start`, {}), "execution")}
+            onCompleteTask={(task) => handleAction(() => post(`/tasks/${task.id}/complete`, { completionNote: "执行中心处理完成" }), "execution")}
+            onStartTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-start`, {}), "execution")}
+            onPassTaskTest={(task) => handleAction(() => post(`/tasks/${task.id}/test-pass`, { note: "执行中心测试通过" }), "execution")}
+            onCloseTask={(task) => handleAction(() => post(`/tasks/${task.id}/close`, { note: "执行中心手动关闭" }), "execution")}
+            onStartDefectFix={(defect) => handleAction(() => post(`/defects/${defect.id}/start-fix`, {}), "execution")}
+            onCompleteDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/fix-complete`, { fixNote: "执行中心完成修复" }), "execution")}
             canVerify={canTest}
-            onVerifyDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/verify`, { verifyNote: "验证通过" }))}
-            onRejectDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reject`, { reason: "验证未通过" }))}
-            onCloseDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/close`, { reason: "手动关闭" }))}
-            onReopenDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reopen`, { reason: "重新开启" }))}
+            onVerifyDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/verify`, { verifyNote: "验证通过" }), "execution")}
+            onRejectDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reject`, { reason: "验证未通过" }), "execution")}
+            onCloseDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/close`, { reason: "手动关闭" }), "execution")}
+            onReopenDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reopen`, { reason: "重新开启" }), "execution")}
             isProductManager={isProductManager}
           />
         ) : null}
 
         {view === "release" ? (
-          <ReleaseCenter versions={versions} canPublish={canPublish} onPublish={(version) => handleAction(() => post(`/versions/${version.id}/publish`, { releaseConclusion: "成功" }))} />
+          <ReleaseCenter versions={versions} canPublish={canPublish} onPublish={(version) => handleAction(() => post(`/versions/${version.id}/publish`, { releaseConclusion: "成功" }), "release")} />
         ) : null}
 
         {view === "admin" && isProductManager ? (
@@ -556,7 +373,7 @@ export function App() {
             data={admin}
             onNewPerson={() => setAdminEdit({ kind: "personAccount" })}
             onEdit={setAdminEdit}
-            onAdminPost={(path, body) => handleAction(() => post(path, body))}
+            onAdminPost={(path, body) => handleAction(() => post(path, body), "admin")}
           />
         ) : null}
       </main>
@@ -566,7 +383,7 @@ export function App() {
         data={admin}
         onClose={() => setAdminEdit(null)}
         onSubmit={async (path, body) => {
-          const success = await handleAction(() => post(path, body));
+          const success = await handleAction(() => post(path, body), "admin");
           if (success) setAdminEdit(null);
           return success;
         }}
@@ -576,8 +393,19 @@ export function App() {
         requirement={reviewTarget}
         onClose={() => setReviewTarget(null)}
         onSubmit={async (requirement, body) => {
-          const success = await handleAction(() => post(`/requirements/${requirement.id}/review`, body));
+          const success = await handleAction(() => post(`/requirements/${requirement.id}/review`, body), "project");
           if (success) setReviewTarget(null);
+          return success;
+        }}
+      />
+
+      <ScheduleDialog
+        state={scheduleEdit}
+        onClose={() => setScheduleEdit(null)}
+        onSubmit={async (state, body) => {
+          const path = state.type === "task" ? `/tasks/${state.item.id}` : `/defects/${state.item.id}`;
+          const success = await handleAction(() => patch(path, body), "execution");
+          if (success) setScheduleEdit(null);
           return success;
         }}
       />
@@ -599,10 +427,10 @@ export function App() {
         defectPriorities={admin?.defectPriorities || []}
         onSubmit={(kind, body) => {
           if (kind === "project" && drawerContext.editProjectId) {
-            return handleAction(() => patch(`/projects/${drawerContext.editProjectId}`, body));
+            return handleAction(() => patch(`/projects/${drawerContext.editProjectId}`, body), "project");
           }
           if (kind === "requirement" && drawerContext.requirementId && drawerContext.revisionMode) {
-            return handleAction(() => post(`/requirements/${drawerContext.requirementId}/revision`, { ...body, mode: drawerContext.revisionMode }));
+            return handleAction(() => post(`/requirements/${drawerContext.requirementId}/revision`, { ...body, mode: drawerContext.revisionMode }), "project");
           }
           const map: Record<Exclude<DrawerKind, null>, string> = {
             project: "/projects",
@@ -613,21 +441,21 @@ export function App() {
             document: "/documents",
             person: "/admin/people"
           };
-          return handleAction(() => post(map[kind], body));
+          const refreshByKind: Record<Exclude<DrawerKind, null>, RefreshTarget> = {
+            project: "project",
+            requirement: "project",
+            task: "project",
+            defect: "project",
+            version: "release",
+            document: "project",
+            person: "admin"
+          };
+          return handleAction(() => post(map[kind], body), refreshByKind[kind]);
         }}
       />
     </div>
   );
 
-  function setDrawerForSchedule(type: "task" | "defect", item: DevTask | Defect) {
-    const date = window.prompt("计划完成时间，格式 YYYY-MM-DD", type === "task" ? (item as DevTask).plannedFinishDate?.slice(0, 10) || "" : (item as Defect).plannedFixDate?.slice(0, 10) || "");
-    if (date === null) return;
-    if (type === "task") {
-      void handleAction(() => patch(`/tasks/${item.id}`, { plannedFinishDate: date }));
-    } else {
-      void handleAction(() => patch(`/defects/${item.id}`, { plannedFixDate: date }));
-    }
-  }
 }
 
 function QuickActions({
@@ -2032,219 +1860,4 @@ function CreateDrawer({
       </aside>
     </div>
   );
-}
-
-function ProjectSelect({ projects, defaultValue }: { projects: Project[]; defaultValue?: string | number | null }) {
-  return <Select name="projectId" label="所属项目" defaultValue={defaultValue} options={projects.map((project) => [String(project.id), project.name])} />;
-}
-
-function PeopleSelect({
-  name,
-  label: text,
-  people,
-  defaultValue,
-  required
-}: {
-  name: string;
-  label: string;
-  people: Array<{ id: number; name: string }>;
-  defaultValue?: string | number | null;
-  required?: boolean;
-}) {
-  return <Select name={name} label={text} required={required} defaultValue={defaultValue} options={[["", "未指定"], ...people.map((person) => [String(person.id), person.name] as [string, string])]} />;
-}
-
-function Field({
-  name,
-  label: text,
-  type = "text",
-  required,
-  defaultValue,
-  value,
-  disabled,
-  onChange
-}: {
-  name: string;
-  label: string;
-  type?: string;
-  required?: boolean;
-  defaultValue?: string | number | null;
-  value?: string | number | null;
-  disabled?: boolean;
-  onChange?: (value: string) => void;
-}) {
-  const inputProps = value === undefined ? { defaultValue: defaultValue ?? "" } : { value: value ?? "" };
-  return (
-    <label className={required ? "field required" : "field"}>
-      <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
-      <input name={name} type={type} required={required} disabled={disabled} onChange={onChange ? (event) => onChange(event.currentTarget.value) : undefined} {...inputProps} />
-    </label>
-  );
-}
-
-function Textarea({ name, label: text, required, defaultValue }: { name: string; label: string; required?: boolean; defaultValue?: string | number | null }) {
-  return (
-    <label className={required ? "field required" : "field"}>
-      <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
-      <textarea name={name} required={required} defaultValue={defaultValue ?? ""} />
-    </label>
-  );
-}
-
-function RichTextDisplay({ value, emptyText = "-" }: { value?: string | number | null; emptyText?: string }) {
-  const html = normalizeRichText(value);
-  if (!html) return <span className="rich-empty">{emptyText}</span>;
-  return <div className="rich-text-display" dangerouslySetInnerHTML={{ __html: sanitizeRichTextHtml(html) }} />;
-}
-
-function RichTextEditor({
-  name,
-  label: text,
-  required,
-  defaultValue
-}: {
-  name: string;
-  label: string;
-  required?: boolean;
-  defaultValue?: string | number | null;
-}) {
-  const editorRef = useRef<HTMLDivElement | null>(null);
-  const initialHtmlRef = useRef(normalizeRichText(defaultValue));
-  const [html, setHtml] = useState(initialHtmlRef.current);
-  const sanitizedHtml = sanitizeRichTextHtml(html);
-
-  function syncFromEditor() {
-    setHtml(editorRef.current?.innerHTML || "");
-  }
-
-  function runCommand(command: string) {
-    editorRef.current?.focus();
-    document.execCommand(command, false);
-    syncFromEditor();
-  }
-
-  function cleanEditor() {
-    const clean = sanitizeRichTextHtml(editorRef.current?.innerHTML || "");
-    if (editorRef.current && editorRef.current.innerHTML !== clean) {
-      editorRef.current.innerHTML = clean;
-    }
-    setHtml(clean);
-  }
-
-  return (
-    <div className={required ? "field required rich-editor-field" : "field rich-editor-field"}>
-      <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
-      <div className="rich-toolbar" aria-label={`${text}格式工具`}>
-        <button type="button" title="加粗" onMouseDown={(event) => { event.preventDefault(); runCommand("bold"); }}>
-          <Bold size={15} />
-        </button>
-        <button type="button" title="斜体" onMouseDown={(event) => { event.preventDefault(); runCommand("italic"); }}>
-          <Italic size={15} />
-        </button>
-        <button type="button" title="无序列表" onMouseDown={(event) => { event.preventDefault(); runCommand("insertUnorderedList"); }}>
-          <List size={15} />
-        </button>
-        <button type="button" title="有序列表" onMouseDown={(event) => { event.preventDefault(); runCommand("insertOrderedList"); }}>
-          <ListOrdered size={15} />
-        </button>
-      </div>
-      <div
-        ref={editorRef}
-        className="rich-editor"
-        contentEditable
-        data-placeholder={`填写${text}`}
-        suppressContentEditableWarning
-        onInput={syncFromEditor}
-        onBlur={cleanEditor}
-        dangerouslySetInnerHTML={{ __html: initialHtmlRef.current }}
-      />
-      <input type="hidden" name={name} value={sanitizedHtml} />
-      {required ? <input type="hidden" name={`${name}__required`} value={stripRichText(sanitizedHtml)} data-rich-required="true" data-rich-label={text} /> : null}
-    </div>
-  );
-}
-
-function Select({
-  name,
-  label: text,
-  options,
-  defaultValue,
-  value,
-  disabled,
-  required,
-  onChange
-}: {
-  name: string;
-  label: string;
-  options: Array<[string, string]>;
-  defaultValue?: string | number | null;
-  value?: string | number | null;
-  disabled?: boolean;
-  required?: boolean;
-  onChange?: (value: string) => void;
-}) {
-  const selectProps = value === undefined ? { defaultValue: defaultValue ?? "" } : { value: value ?? "" };
-  return (
-    <label className={required ? "field required" : "field"}>
-      <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
-      <select name={name} disabled={disabled} required={required} onChange={onChange ? (event) => onChange(event.currentTarget.value) : undefined} {...selectProps}>
-        {options.map(([value, name]) => (
-          <option key={`${value}-${name}`} value={value}>{name}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function MultiSelect({ name, label: text, options, defaultValue }: { name: string; label: string; options: Array<[string, string]>; defaultValue?: string[] }) {
-  return (
-    <label className="field">
-      <span className="field-label">{text}</span>
-      <select name={name} multiple size={Math.min(6, Math.max(3, options.length))} defaultValue={defaultValue || []}>
-        {options.map(([value, name]) => (
-          <option key={`${value}-${name}`} value={value}>{name}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function ReadonlyField({ name, label: text, value, displayValue }: { name: string; label: string; value?: string | number | null; displayValue?: string | number | null }) {
-  return (
-    <label className="field readonly-field">
-      <span className="field-label">{text}</span>
-      <input value={displayValue ?? value ?? "-"} readOnly aria-readonly="true" />
-      <input type="hidden" name={name} value={value ?? ""} />
-    </label>
-  );
-}
-
-function Metric({ label, value, tone }: { label: string; value: number; tone?: "warn" }) {
-  return (
-    <div className={`metric ${tone || ""}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function Badge({ value }: { value: string }) {
-  return <span className="badge">{value}</span>;
-}
-
-function ListSection<T>({ title, items, render }: { title: string; items: T[]; render: (item: T) => ReactNode }) {
-  return (
-    <section className="list-section">
-      <div className="section-title">
-        <h2>{title}</h2>
-      </div>
-      <div className="list-stack">
-        {items?.length ? items.map((item, index) => <div key={index}>{render(item)}</div>) : <EmptyState text="暂无数据" />}
-      </div>
-    </section>
-  );
-}
-
-function EmptyState({ text }: { text: string }) {
-  return <div className="empty">{text}</div>;
 }
