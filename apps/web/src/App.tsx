@@ -1669,53 +1669,62 @@ function ReviewDialog({
   );
 }
 
-function TaskPriorityPanel({
-  requirement,
+function personPrimaryPositionCode(person?: Person | null) {
+  return person?.primaryPosition?.code || person?.positions?.find((item) => item.isPrimary)?.position.code || person?.positions?.[0]?.position.code || "";
+}
+
+function personPrimaryPositionName(person?: Person | null) {
+  return person?.primaryPosition?.name || person?.positions?.find((item) => item.isPrimary)?.position.name || person?.positions?.[0]?.position.name || "";
+}
+
+function RequirementPrioritySummary({ requirement }: { requirement?: Requirement | null }) {
+  return (
+    <section className="priority-overview requirement-priority">
+      <span>需求优先级分数</span>
+      <strong>{requirement?.priorityScore ?? "-"}</strong>
+      <em>{requirement ? `${requirement.title}（${requirement.code}）` : "请选择关联需求"}</em>
+    </section>
+  );
+}
+
+function AssigneeWorkloadPanel({
   assigneeName,
   assigneeTasks,
   assigneeDefects
 }: {
-  requirement?: Requirement | null;
   assigneeName?: string;
   assigneeTasks: DevTask[];
   assigneeDefects: Defect[];
 }) {
   return (
     <section className="priority-panel">
-      <div className="priority-overview">
-        <span>需求优先级分数</span>
-        <strong>{requirement?.priorityScore ?? "-"}</strong>
-        <em>{requirement ? `${requirement.title}（${requirement.code}）` : "请选择关联需求"}</em>
+      <div className="section-title compact-title">
+        <h3>{assigneeName || "未选择负责人"}</h3>
+        <span className="section-note">当前开发任务和缺陷修复的优先级分数</span>
       </div>
-      <div className="priority-workload">
-        <div className="section-title compact-title">
-          <h3>{assigneeName || "未选择负责人"}</h3>
-          <span className="section-note">现有开发任务和缺陷修复的优先级分数</span>
-        </div>
-        <div className="priority-columns">
-          <PriorityItems
-            title="开发任务"
-            emptyText="暂无开发任务"
-            items={assigneeTasks.map((task) => ({
-              id: task.id,
-              title: task.title,
-              meta: `${task.project?.name || "-"} / ${task.requirement?.title || "-"}`,
-              status: task.status,
-              priorityScore: task.priorityScore
-            }))}
-          />
-          <PriorityItems
-            title="缺陷修复"
-            emptyText="暂无缺陷修复"
-            items={assigneeDefects.map((defect) => ({
-              id: defect.id,
-              title: defect.title,
-              meta: `${defect.project?.name || "-"} / ${defect.task?.title || "-"}`,
-              status: defect.status,
-              priorityScore: defect.priorityScore
-            }))}
-          />
-        </div>
+      <div className="priority-columns">
+        <PriorityItems
+          title="开发任务"
+          emptyText="暂无开发任务"
+          items={assigneeTasks.map((task) => ({
+            id: task.id,
+            title: task.title,
+            meta: `${task.project?.name || "-"} / ${task.requirement?.title || "-"}`,
+            status: task.status,
+            priorityScore: task.priorityScore
+          }))}
+        />
+        <PriorityItems
+          title="缺陷修复"
+          emptyText="暂无缺陷修复"
+          items={assigneeDefects.map((defect) => ({
+            id: defect.id,
+            title: defect.title,
+            meta: `${defect.project?.name || "-"} / ${defect.task?.title || "-"}`,
+            status: defect.status,
+            priorityScore: defect.priorityScore
+          }))}
+        />
       </div>
     </section>
   );
@@ -1846,16 +1855,17 @@ function CreateDrawer({
   const defaultProjectOwnerId = editingProject?.ownerId || editingProject?.owner?.id || (isProductManagerPerson(currentPerson) ? currentPersonId : productManagers[0]?.id);
   const requirementTypeOptions = dictionaryOptions(dictionaries, "REQUIREMENT_TYPE", [["FEATURE", "功能需求"], ["PROCESS", "流程需求"], ["DATA", "数据需求"], ["REPORT", "报表需求"], ["UX", "体验优化"]]);
   const requirementLaunchStatusOptions = dictionaryOptions(dictionaries, "REQUIREMENT_LAUNCH_STATUS", [["TO_RELEASE", "待上线"], ["RELEASED", "已上线"]]);
-  const taskTypeOptions = positions.length ? positions.filter((item) => item.isActive !== false).map((item) => [item.code, item.name] as [string, string]) : dictionaryOptions(dictionaries, "TASK_TYPE", [["UI", "UI设计"], ["FRONTEND", "前端开发"], ["BACKEND", "后端开发"], ["DATA", "数据开发"], ["TEST", "测试验证"]]);
   const versionTypeOptions = dictionaryOptions(dictionaries, "VERSION_TYPE", [["NORMAL", "常规版本"], ["HOTFIX", "紧急修复"], ["GRAY", "灰度版本"]]);
   const documentTypeOptions = dictionaryOptions(dictionaries, "DOCUMENT_TYPE", [["BUSINESS", "业务资料"], ["TECH", "技术资料"], ["TEST", "测试资料"], ["RELEASE", "上线资料"]]);
   const taskAssigneeNumberId = Number(taskAssigneeId);
   const selectedTaskAssignee = people.find((person) => person.id === taskAssigneeNumberId);
+  const taskTypeCode = personPrimaryPositionCode(selectedTaskAssignee) || currentPositionCode;
+  const taskTypeName = personPrimaryPositionName(selectedTaskAssignee) || positions.find((position) => position.code === taskTypeCode)?.name || label(taskTypeCode);
   const assigneeTasks = tasks
-    .filter((task) => task.assignee?.id === taskAssigneeNumberId)
+    .filter((task) => task.assignee?.id === taskAssigneeNumberId && !["TEST_PASSED", "CLOSED"].includes(task.status))
     .sort((left, right) => (right.priorityScore || 0) - (left.priorityScore || 0));
   const assigneeDefects = defects
-    .filter((defect) => defect.assignee?.id === taskAssigneeNumberId)
+    .filter((defect) => defect.assignee?.id === taskAssigneeNumberId && !["VERIFIED", "CLOSED"].includes(defect.status))
     .sort((left, right) => (right.priorityScore || 0) - (left.priorityScore || 0));
   const titles: Record<Exclude<DrawerKind, null>, string> = {
     project: "新建项目",
@@ -1949,16 +1959,17 @@ function CreateDrawer({
                 <>
                   {contextProject ? <ReadonlyField name="projectId" label="所属项目" value={contextProject.id} displayValue={`${contextProject.name}（${contextProject.code}）`} /> : null}
                   <ReadonlyField name="requirementId" label="关联需求" value={selectedRequirement.id} displayValue={`${selectedRequirement.title}（${selectedRequirement.code}）`} />
+                  <RequirementPrioritySummary requirement={selectedRequirement} />
                 </>
               ) : (
                 <Select name="requirementId" label="关联需求" options={selectableTaskRequirements.map((item) => [String(item.id), item.title])} defaultValue={draftValue(draft, "requirementId")} />
               )}
               <Field name="title" label="任务标题" required defaultValue={draftValue(draft, "title")} />
-              <Select name="type" label="任务类型（按岗位带出）" options={taskTypeOptions} defaultValue={draftValue(draft, "type", currentPositionCode)} />
               <Select name="assigneeId" label="负责人" options={people.map((person) => [String(person.id), person.name])} value={taskAssigneeId} onChange={setTaskAssigneeId} />
+              <ReadonlyField name="type" label="任务类型（由负责人岗位带出）" value={taskTypeCode} displayValue={taskTypeName} />
+              <AssigneeWorkloadPanel assigneeName={selectedTaskAssignee?.name} assigneeTasks={assigneeTasks} assigneeDefects={assigneeDefects} />
               <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate", todayDateInput())} />
               <Field name="plannedFinishDate" label="计划完成时间" type="date" defaultValue={draftValue(draft, "plannedFinishDate")} />
-              <TaskPriorityPanel requirement={selectedRequirement} assigneeName={selectedTaskAssignee?.name} assigneeTasks={assigneeTasks} assigneeDefects={assigneeDefects} />
             </>
           ) : null}
           {activeDrawerKind === "defect" ? (

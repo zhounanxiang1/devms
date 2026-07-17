@@ -232,6 +232,17 @@ export class CoreService {
     }
   }
 
+  private async taskTypeForAssignee(assigneeId: number) {
+    const assignee = await this.prisma.person.findUnique({
+      where: { id: assigneeId },
+      include: includePerson
+    });
+    if (!assignee) throw new NotFoundException("负责人不存在");
+    const taskType = assignee.primaryPosition?.code || assignee.positions.find((item) => item.isPrimary)?.position.code || assignee.positions[0]?.position.code;
+    if (!taskType) throw new BadRequestException("负责人未配置岗位，无法自动带出任务类型");
+    return taskType;
+  }
+
   async calculateRequirementScore(
     priorityLevel: string,
     timingBonus = 0,
@@ -611,15 +622,17 @@ export class CoreService {
     }
     if (!requirement) throw new NotFoundException("需求不存在");
     await this.assertProjectOpen(requirement.projectId, "新增开发任务");
+    const assigneeId = toInt(body.assigneeId) || user.personId;
+    const taskType = await this.taskTypeForAssignee(assigneeId);
     const task = await this.prisma.devTask.create({
       data: {
         code: body.code || code("TASK"),
         title: body.title,
         projectId: requirement.projectId,
         requirementId: requirement.id,
-        type: body.type || user.primaryPosition || user.positions[0] || "BACKEND",
+        type: taskType,
         status: TaskStatus.TODO,
-        assigneeId: toInt(body.assigneeId) || user.personId,
+        assigneeId,
         plannedStartDate: toDate(body.plannedStartDate) || startOfToday(),
         plannedFinishDate: toDate(body.plannedFinishDate),
         priorityScore: requirement.priorityScore
@@ -636,13 +649,15 @@ export class CoreService {
   async updateTask(user: AuthUser, id: number, body: any) {
     const before = await this.prisma.devTask.findUnique({ where: { id } });
     if (!before) throw new NotFoundException("任务不存在");
+    const assigneeId = body.assigneeId === undefined ? undefined : toInt(body.assigneeId);
+    const taskType = assigneeId === undefined ? undefined : await this.taskTypeForAssignee(assigneeId);
     const task = await this.prisma.devTask.update({
       where: { id },
       data: pickDefined({
         title: body.title,
-        type: body.type,
+        type: taskType,
         status: body.status,
-        assigneeId: toInt(body.assigneeId),
+        assigneeId,
         plannedStartDate: toDate(body.plannedStartDate),
         plannedFinishDate: toDate(body.plannedFinishDate),
         blockedReason: body.blockedReason

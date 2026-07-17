@@ -686,20 +686,24 @@ tr.due td:first-child {
   inset: 0;
   background: rgba(12, 22, 27, 0.32);
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
   z-index: 20;
 }
 
 .drawer {
-  width: min(520px, 100vw);
-  height: 100vh;
+  width: min(760px, calc(100vw - 44px));
+  max-height: min(820px, calc(100vh - 44px));
   background: #ffffff;
-  border-left: 1px solid #cbd5df;
+  border: 1px solid #cbd5df;
+  border-radius: 8px;
   overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(15, 31, 42, 0.24);
 }
 
 .compact-drawer {
-  width: min(460px, 100vw);
+  width: min(520px, calc(100vw - 44px));
 }
 
 .drawer-form {
@@ -762,11 +766,6 @@ tr.due td:first-child {
   grid-row: span 2;
   color: #126b73;
   font-size: 26px;
-}
-
-.priority-workload {
-  border-top: 1px solid #e2e9ef;
-  padding-top: 10px;
 }
 
 .compact-title {
