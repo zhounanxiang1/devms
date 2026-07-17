@@ -1871,6 +1871,12 @@ function CreateDrawer({
   };
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const invalidRichField = Array.from(event.currentTarget.querySelectorAll<HTMLInputElement>("[data-rich-required='true']")).find((input) => !stripRichText(input.value));
+    if (invalidRichField) {
+      setDraftMessage(`${invalidRichField.dataset.richLabel || "必填内容"}不能为空。`);
+      invalidRichField.closest(".rich-editor-field")?.querySelector<HTMLElement>(".rich-editor")?.focus();
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const body: Record<string, any> = Object.fromEntries(form.entries());
     Object.keys(body).forEach((key) => {
@@ -2126,7 +2132,7 @@ function RichTextEditor({
   }
 
   return (
-    <label className={required ? "field required rich-editor-field" : "field rich-editor-field"}>
+    <div className={required ? "field required rich-editor-field" : "field rich-editor-field"}>
       <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
       <div className="rich-toolbar" aria-label={`${text}格式工具`}>
         <button type="button" title="加粗" onMouseDown={(event) => { event.preventDefault(); runCommand("bold"); }}>
@@ -2153,8 +2159,8 @@ function RichTextEditor({
         dangerouslySetInnerHTML={{ __html: initialHtmlRef.current }}
       />
       <input type="hidden" name={name} value={sanitizedHtml} />
-      {required ? <textarea className="rich-required-proxy" name={`${name}__required`} value={stripRichText(sanitizedHtml)} required onChange={() => undefined} tabIndex={-1} aria-hidden="true" /> : null}
-    </label>
+      {required ? <input type="hidden" name={`${name}__required`} value={stripRichText(sanitizedHtml)} data-rich-required="true" data-rich-label={text} /> : null}
+    </div>
   );
 }
 

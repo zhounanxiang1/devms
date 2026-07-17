@@ -105,7 +105,8 @@ button.compact {
   gap: 14px;
 }
 
-label {
+label,
+.field {
   display: grid;
   gap: 7px;
   font-size: 13px;
@@ -791,19 +792,6 @@ tr.due td:first-child {
 .rich-editor ul,
 .rich-editor ol {
   padding-left: 20px;
-}
-
-.rich-required-proxy {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 1px;
-  height: 1px;
-  min-height: 1px;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
 }
 
 .error {
