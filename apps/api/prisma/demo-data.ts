@@ -656,6 +656,8 @@ async function main() {
     const priorityLevel = requirement?.priorityLevel || "P4";
     const base = String(spec.environment).toUpperCase() === "ONLINE" ? defectScore[spec.level].online : defectScore[spec.level].offline;
     const priorityScore = base * (requirementDefectWeight[priorityLevel] || 1) + (spec.timingBonus || 0);
+    const plannedStartDate = spec.planned === undefined ? null : spec.planned === null ? null : day(spec.planned - 1);
+    const plannedFinishDate = spec.planned === undefined ? null : spec.planned === null ? null : day(spec.planned);
     defects[spec.code] = await prisma.defect.upsert({
       where: { code: spec.code },
       update: {
@@ -671,7 +673,9 @@ async function main() {
         actualResult: spec.status === DefectStatus.CLOSED ? "演示数据：关闭处理。" : undefined,
         expectedResult: spec.status === DefectStatus.VERIFIED ? "演示数据：验证通过。" : undefined,
         environment: spec.environment,
-        plannedFixDate: spec.planned === undefined ? null : spec.planned === null ? null : day(spec.planned),
+        plannedStartDate,
+        plannedFinishDate,
+        plannedFixDate: plannedFinishDate,
         actualFixDate: spec.status === DefectStatus.FIXED || spec.status === DefectStatus.VERIFIED || spec.status === DefectStatus.CLOSED ? day(-1) : null,
         timingBonus: spec.timingBonus || 0,
         timingBonusReason: spec.timingBonus ? "演示数据：线上紧急缺陷" : null,
@@ -691,7 +695,9 @@ async function main() {
         actualResult: spec.status === DefectStatus.CLOSED ? "演示数据：关闭处理。" : undefined,
         expectedResult: spec.status === DefectStatus.VERIFIED ? "演示数据：验证通过。" : undefined,
         environment: spec.environment,
-        plannedFixDate: spec.planned === undefined ? null : spec.planned === null ? null : day(spec.planned),
+        plannedStartDate,
+        plannedFinishDate,
+        plannedFixDate: plannedFinishDate,
         actualFixDate: spec.status === DefectStatus.FIXED || spec.status === DefectStatus.VERIFIED || spec.status === DefectStatus.CLOSED ? day(-1) : null,
         timingBonus: spec.timingBonus || 0,
         timingBonusReason: spec.timingBonus ? "演示数据：线上紧急缺陷" : null,

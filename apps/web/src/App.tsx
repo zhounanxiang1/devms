@@ -1451,6 +1451,7 @@ function DefectTable({
             <th>关联任务/需求</th>
             <th>负责人</th>
             <th>状态</th>
+            <th>排期</th>
             <th>环境</th>
             <th>优先级分数</th>
             <th></th>
@@ -1458,7 +1459,7 @@ function DefectTable({
         </thead>
         <tbody>
           {defects.length ? defects.map((defect) => (
-            <tr key={defect.id} className={isDue(defect.plannedFixDate) ? "due" : ""}>
+            <tr key={defect.id} className={isDue(defect.plannedFinishDate || defect.plannedFixDate) ? "due" : ""}>
               <td>
                 <strong>{defect.title}</strong>
                 <span>{defect.code} · {defect.level}</span>
@@ -1467,6 +1468,7 @@ function DefectTable({
               <td>{defect.task?.title || "-"} / {defect.task?.requirement?.title || defect.requirement?.title || "-"}</td>
               <td>{defect.assignee?.name || "-"}</td>
               <td><Badge value={label(defect.status)} /></td>
+              <td>{fmtDate(defect.plannedStartDate || defect.plannedFixDate)} - {fmtDate(defect.plannedFinishDate || defect.plannedFixDate)}</td>
               <td>{defect.environment}</td>
               <td>{defect.priorityScore}</td>
               <td className="row-actions">
@@ -1481,7 +1483,7 @@ function DefectTable({
             </tr>
           )) : (
             <tr>
-              <td colSpan={8}><div className="table-empty">暂无缺陷修复任务</div></td>
+              <td colSpan={9}><div className="table-empty">暂无缺陷修复任务</div></td>
             </tr>
           )}
         </tbody>
@@ -1749,7 +1751,7 @@ function scheduleItemsFromWork(tasks: DevTask[], defects: Defect[]): ScheduleIte
       };
     }),
     ...defects.map((defect) => {
-      const range = normalizeScheduleRange(parseDateOnly(defect.plannedFixDate), parseDateOnly(defect.plannedFixDate));
+      const range = normalizeScheduleRange(parseDateOnly(defect.plannedStartDate || defect.plannedFixDate), parseDateOnly(defect.plannedFinishDate || defect.plannedFixDate));
       return {
         id: `defect-${defect.id}`,
         kind: "defect" as const,
@@ -2106,6 +2108,8 @@ function CreateDrawer({
               <Select name="level" label="缺陷等级" defaultValue={draftValue(draft, "level")} options={(defectPriorities.length ? defectPriorities.filter((item) => item.isActive !== false).map((item) => [item.code, item.name] as [string, string]) : [["L1", "1级 致命"], ["L2", "2级 严重"], ["L3", "3级 一般"], ["L4", "4级 轻微"]])} />
               <Select name="environment" label="发现环境" defaultValue={draftValue(draft, "environment")} options={[["ONLINE", "线上生产"], ["GRAY", "灰度"], ["TEST", "测试"], ["DEV", "开发"]]} />
               <PeopleSelect name="assigneeId" label="负责人" people={people} defaultValue={draftValue(draft, "assigneeId")} />
+              <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate", todayDateInput())} />
+              <Field name="plannedFinishDate" label="计划结束时间" type="date" defaultValue={draftValue(draft, "plannedFinishDate")} />
               <Textarea name="description" label="缺陷描述" required defaultValue={draftValue(draft, "description")} />
             </>
           ) : null}

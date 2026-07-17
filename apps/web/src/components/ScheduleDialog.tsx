@@ -47,7 +47,10 @@ export function ScheduleDialog({
               <Field name="plannedFinishDate" label="计划完成时间" type="date" defaultValue={toDateInput(activeState.item.plannedFinishDate)} />
             </>
           ) : (
-            <Field name="plannedFixDate" label="计划修复时间" type="date" defaultValue={toDateInput(activeState.item.plannedFixDate)} />
+            <>
+              <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={toDateInput(activeState.item.plannedStartDate || activeState.item.plannedFixDate)} />
+              <Field name="plannedFinishDate" label="计划结束时间" type="date" defaultValue={toDateInput(activeState.item.plannedFinishDate || activeState.item.plannedFixDate)} />
+            </>
           )}
           <div className="form-actions">
             <button type="button" className="ghost" onClick={onClose}>取消</button>

@@ -382,6 +382,8 @@ model Defect {
   expectedResult    String?      @db.Text
   environment       String       @default("TEST")
   attachmentUrl     String?      @db.Text
+  plannedStartDate  DateTime?
+  plannedFinishDate DateTime?
   plannedFixDate    DateTime?
   actualFixDate     DateTime?
   timingBonus       Float        @default(0)

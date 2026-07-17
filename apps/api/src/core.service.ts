@@ -114,7 +114,7 @@ export class CoreService {
           ]
         },
         include: { project: true, task: { include: { requirement: true } }, assignee: true },
-        orderBy: [{ priorityScore: "desc" }, { plannedFixDate: "asc" }]
+        orderBy: [{ priorityScore: "desc" }, { plannedFinishDate: "asc" }, { plannedFixDate: "asc" }]
       }),
       this.prisma.project.findMany({
         where: {
@@ -136,7 +136,7 @@ export class CoreService {
       summary: {
         developmentTasks: tasks.length,
         defectTasks: defects.length,
-        dueSoon: tasks.filter((task) => isDue(task.plannedFinishDate)).length + defects.filter((defect) => isDue(defect.plannedFixDate)).length
+        dueSoon: tasks.filter((task) => isDue(task.plannedFinishDate)).length + defects.filter((defect) => isDue(defect.plannedFinishDate || defect.plannedFixDate)).length
       },
       developmentTasks: tasks,
       defectTasks: defects,
@@ -754,7 +754,7 @@ export class CoreService {
     return this.prisma.defect.findMany({
       where: projectId ? { projectId } : {},
       include: { project: true, task: { include: { requirement: true } }, assignee: true, reporter: true },
-      orderBy: [{ priorityScore: "desc" }, { plannedFixDate: "asc" }]
+      orderBy: [{ priorityScore: "desc" }, { plannedFinishDate: "asc" }, { plannedFixDate: "asc" }]
     });
   }
 
@@ -769,6 +769,8 @@ export class CoreService {
       timingBonus: Number(body.timingBonus || 0)
     });
     const assigneeId = toInt(body.assigneeId);
+    const plannedStartDate = toDate(body.plannedStartDate);
+    const plannedFinishDate = toDate(body.plannedFinishDate) || toDate(body.plannedFixDate);
     const defect = await this.prisma.defect.create({
       data: {
         code: body.code || code("BUG"),
@@ -786,7 +788,9 @@ export class CoreService {
         expectedResult: body.expectedResult,
         environment: body.environment || "TEST",
         attachmentUrl: body.attachmentUrl,
-        plannedFixDate: toDate(body.plannedFixDate),
+        plannedStartDate,
+        plannedFinishDate,
+        plannedFixDate: plannedFinishDate,
         timingBonus: Number(body.timingBonus || 0),
         timingBonusReason: body.timingBonusReason,
         priorityScore
@@ -825,7 +829,9 @@ export class CoreService {
         expectedResult: body.expectedResult,
         environment: body.environment,
         attachmentUrl: body.attachmentUrl,
-        plannedFixDate: toDate(body.plannedFixDate),
+        plannedStartDate: toDate(body.plannedStartDate),
+        plannedFinishDate: toDate(body.plannedFinishDate) || toDate(body.plannedFixDate),
+        plannedFixDate: toDate(body.plannedFinishDate) || toDate(body.plannedFixDate),
         timingBonus: body.timingBonus === undefined ? undefined : Number(body.timingBonus),
         timingBonusReason: body.timingBonusReason,
         priorityScore

@@ -112,6 +112,8 @@ export type Defect = {
   status: string;
   environment: string;
   priorityScore: number;
+  plannedStartDate?: string;
+  plannedFinishDate?: string;
   plannedFixDate?: string;
   project?: Project;
   taskId?: number;
