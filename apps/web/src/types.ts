@@ -59,9 +59,13 @@ export type Project = {
   scope: string;
   stage: string;
   owner?: Person;
+  ownerId?: number;
   plannedStartDate?: string;
   plannedEndDate?: string;
   expectedLaunchDate?: string;
+  background?: string | null;
+  goal?: string | null;
+  relatedSystems?: string | null;
   _count?: Record<string, number>;
 };
 
@@ -80,6 +84,9 @@ export type Requirement = {
   owner?: Person;
   expectedLaunchDate?: string;
   description?: string;
+  reviewDate?: string;
+  reviewConclusion?: string;
+  reviewRecord?: string;
 };
 
 export type DevTask = {

@@ -138,6 +138,22 @@ export class CoreService {
     return user.positions.includes(PRODUCT_MANAGER) || user.positions.includes(TEST);
   }
 
+  private async ensureProductManagerOwner(ownerId?: number | null) {
+    if (!ownerId) throw new BadRequestException("项目负责人必填");
+    const owner = await this.prisma.person.findUnique({
+      where: { id: ownerId },
+      include: includePerson
+    });
+    const ownerPositions = new Set([
+      owner?.primaryPosition?.code,
+      ...(owner?.positions.map((item) => item.position.code) || [])
+    ].filter(Boolean));
+    if (!owner || !ownerPositions.has(PRODUCT_MANAGER)) {
+      throw new BadRequestException("项目负责人只能选择产品经理岗位人员");
+    }
+    return ownerId;
+  }
+
   async calculateRequirementScore(
     priorityLevel: string,
     timingBonus = 0,
@@ -172,19 +188,7 @@ export class CoreService {
 
   async createProject(user: AuthUser, body: any) {
     requireAnyPosition(user, [PRODUCT_MANAGER], "只有产品经理可以创建项目");
-    const ownerId = toInt(body.ownerId);
-    if (!ownerId) throw new BadRequestException("项目负责人必填");
-    const owner = await this.prisma.person.findUnique({
-      where: { id: ownerId },
-      include: includePerson
-    });
-    const ownerPositions = new Set([
-      owner?.primaryPosition?.code,
-      ...(owner?.positions.map((item) => item.position.code) || [])
-    ].filter(Boolean));
-    if (!owner || !ownerPositions.has(PRODUCT_MANAGER)) {
-      throw new BadRequestException("项目负责人只能选择产品经理岗位人员");
-    }
+    const ownerId = await this.ensureProductManagerOwner(toInt(body.ownerId));
     const project = await this.prisma.project.create({
       data: {
         code: body.code || code("PROJ"),
@@ -232,9 +236,38 @@ export class CoreService {
   async updateProject(user: AuthUser, id: number, body: any) {
     const before = await this.prisma.project.findUnique({ where: { id } });
     if (!before) throw new NotFoundException("项目不存在");
-    void user;
-    void body;
-    throw new BadRequestException("项目创建后不支持编辑项目信息");
+    requireAnyPosition(user, [PRODUCT_MANAGER], "只有产品经理可以编辑项目");
+    const ownerId = body.ownerId === undefined ? undefined : await this.ensureProductManagerOwner(toInt(body.ownerId));
+    const project = await this.prisma.project.update({
+      where: { id },
+      data: pickDefined({
+        name: body.name,
+        ownerId,
+        scope: body.scope,
+        plannedStartDate: toDate(body.plannedStartDate),
+        plannedEndDate: toDate(body.plannedEndDate),
+        expectedLaunchDate: toDate(body.expectedLaunchDate),
+        stage: body.stage,
+        background: body.background,
+        goal: body.goal,
+        relatedSystems: body.relatedSystems
+      })
+    });
+    if (ownerId) {
+      if (before.ownerId && before.ownerId !== ownerId) {
+        await this.prisma.projectMember.updateMany({
+          where: { projectId: id, personId: before.ownerId },
+          data: { isProjectOwner: false }
+        });
+      }
+      await this.prisma.projectMember.upsert({
+        where: { projectId_personId: { projectId: project.id, personId: ownerId } },
+        update: { isProjectOwner: true, responsibility: "项目负责人" },
+        create: { projectId: project.id, personId: ownerId, isProjectOwner: true, responsibility: "项目负责人" }
+      });
+    }
+    await this.log({ user, entityType: "PROJECT", entityId: project.id, projectId: project.id, action: "UPDATE", summary: `更新项目：${project.name}`, beforeJson: before, afterJson: project });
+    return project;
   }
 
   async listRequirements(projectId?: number) {
@@ -300,6 +333,12 @@ export class CoreService {
   }
 
   async reviewRequirement(user: AuthUser, id: number, body: any) {
+    requireAnyPosition(user, [PRODUCT_MANAGER], "只有产品经理可以填写需求评审结果");
+    const before = await this.prisma.requirement.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException("需求不存在");
+    if (before.status !== RequirementStatus.TO_REVIEW && before.status !== RequirementStatus.NEEDS_SUPPLEMENT) {
+      throw new BadRequestException("只有待评审或待补充的需求可以填写评审结果");
+    }
     const map: Record<string, RequirementStatus> = {
       PASS: RequirementStatus.APPROVED,
       REJECT: RequirementStatus.REJECTED,
@@ -318,7 +357,7 @@ export class CoreService {
         reviewDate: toDate(body.reviewDate) || new Date()
       }
     });
-    await this.log({ user, entityType: "REQUIREMENT", entityId: id, projectId: requirement.projectId, requirementId: id, action: "REVIEW", summary: `填写评审结论：${body.conclusion}` });
+    await this.log({ user, entityType: "REQUIREMENT", entityId: id, projectId: requirement.projectId, requirementId: id, action: "REVIEW", summary: `填写评审结论：${body.conclusion}`, beforeJson: before, afterJson: requirement });
     return requirement;
   }
 
