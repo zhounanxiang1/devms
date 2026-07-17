@@ -1,7 +1,6 @@
 import {
-  AccountStatus,
   DefectStatus,
-  EmploymentStatus,
+  Prisma,
   PrismaClient,
   ProjectStage,
   RequirementLaunchStatus,
@@ -10,9 +9,16 @@ import {
   TaskStatus,
   VersionStatus
 } from "@prisma/client";
-import * as bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
+
+const personInclude = {
+  primaryPosition: true,
+  positions: { include: { position: true } },
+  account: true
+} satisfies Prisma.PersonInclude;
+
+type ExistingPerson = Prisma.PersonGetPayload<{ include: typeof personInclude }>;
 
 const requirementBaseScore: Record<string, number> = {
   P0: 40,
@@ -92,73 +98,6 @@ async function ensurePosition(code: string, name: string) {
   });
 }
 
-async function ensureOrganization(code: string, name: string, sort: number, parentId?: number) {
-  return prisma.organization.upsert({
-    where: { code },
-    update: { name, sort, parentId, status: "ACTIVE" },
-    create: { code, name, sort, parentId, status: "ACTIVE" }
-  });
-}
-
-async function ensurePerson(input: {
-  employeeNo: string;
-  name: string;
-  username: string;
-  email: string;
-  phone: string;
-  organizationId: number;
-  positionId: number;
-}) {
-  const person = await prisma.person.upsert({
-    where: { employeeNo: input.employeeNo },
-    update: {
-      name: input.name,
-      email: input.email,
-      phone: input.phone,
-      organizationId: input.organizationId,
-      primaryPositionId: input.positionId,
-      employmentStatus: EmploymentStatus.ACTIVE
-    },
-    create: {
-      name: input.name,
-      employeeNo: input.employeeNo,
-      email: input.email,
-      phone: input.phone,
-      organizationId: input.organizationId,
-      primaryPositionId: input.positionId,
-      employmentStatus: EmploymentStatus.ACTIVE
-    }
-  });
-
-  await prisma.personPosition.upsert({
-    where: { personId_positionId: { personId: person.id, positionId: input.positionId } },
-    update: { isPrimary: true, expiredAt: null },
-    create: { personId: person.id, positionId: input.positionId, isPrimary: true }
-  });
-
-  const passwordHash = await bcrypt.hash("123", 10);
-  await prisma.account.upsert({
-    where: { username: input.username },
-    update: {
-      personId: person.id,
-      passwordHash,
-      initialPassword: true,
-      status: AccountStatus.ACTIVE,
-      allowLogin: true
-    },
-    create: {
-      username: input.username,
-      passwordHash,
-      personId: person.id,
-      initialPassword: true,
-      status: AccountStatus.ACTIVE,
-      allowLogin: true
-    }
-  });
-
-  return person;
-}
-
 async function ensureProjectMember(projectId: number, personId: number, responsibility: string, isProjectOwner = false) {
   await prisma.projectMember.upsert({
     where: { projectId_personId: { projectId, personId } },
@@ -167,15 +106,96 @@ async function ensureProjectMember(projectId: number, personId: number, responsi
   });
 }
 
-async function main() {
-  const root = await ensureOrganization("ROOT", "默认组织", 1);
-  const orgs = {
-    product: await ensureOrganization("DEMO_PRODUCT", "产品与项目管理部", 10, root.id),
-    tech: await ensureOrganization("DEMO_TECH", "研发中心", 20, root.id),
-    qa: await ensureOrganization("DEMO_QA", "质量保障部", 30, root.id),
-    ops: await ensureOrganization("DEMO_OPS", "运维数据部", 40, root.id)
-  };
+function isDemoPerson(person: Pick<ExistingPerson, "employeeNo" | "account">) {
+  return Boolean(person.employeeNo?.startsWith("DEMO_") || person.account?.username?.startsWith("demo_"));
+}
 
+function positionCodes(person: ExistingPerson) {
+  return new Set([
+    person.primaryPosition?.code,
+    ...person.positions.map((item) => item.position.code)
+  ].filter(Boolean) as string[]);
+}
+
+function primaryPositionCode(person: ExistingPerson) {
+  return person.primaryPosition?.code || person.positions.find((item) => item.isPrimary)?.position.code || person.positions[0]?.position.code || "BACKEND";
+}
+
+function chooseByPosition(people: ExistingPerson[], code: string, index = 0) {
+  const matches = people.filter((person) => positionCodes(person).has(code));
+  return matches[index] || matches[0];
+}
+
+async function existingPeople() {
+  const allPeople = await prisma.person.findMany({
+    include: personInclude,
+    orderBy: { id: "asc" }
+  });
+  const people = allPeople.filter((person) => !isDemoPerson(person));
+  if (!people.length) {
+    throw new Error("当前系统没有可挂载测试数据的已有人员，请先在后台维护至少一个人员。");
+  }
+  const pm = chooseByPosition(people, "PRODUCT_MANAGER") || people[0];
+  const test = chooseByPosition(people, "TEST") || pm;
+  const frontendPeople = people.filter((person) => positionCodes(person).has("FRONTEND"));
+  const backendPeople = people.filter((person) => positionCodes(person).has("BACKEND"));
+  const ui = chooseByPosition(people, "UI") || frontendPeople[0] || pm;
+  const fe1 = frontendPeople[0] || backendPeople[0] || pm;
+  const fe2 = frontendPeople[1] || frontendPeople[0] || backendPeople[1] || fe1;
+  const be1 = backendPeople[0] || frontendPeople[0] || pm;
+  const be2 = backendPeople[1] || backendPeople[0] || be1;
+  const data = chooseByPosition(people, "DATA") || backendPeople[2] || be1;
+  const ops = chooseByPosition(people, "OPS") || backendPeople[3] || be2;
+
+  return { pm, ui, fe1, fe2, be1, be2, data, test, ops };
+}
+
+async function cleanupDemoPeople(fallback: { pm: ExistingPerson; test: ExistingPerson; assignee: ExistingPerson }) {
+  const demoAccounts = await prisma.account.findMany({
+    where: { username: { startsWith: "demo_" } },
+    select: { personId: true }
+  });
+  const demoPeople = await prisma.person.findMany({
+    where: {
+      OR: [
+        { employeeNo: { startsWith: "DEMO_" } },
+        { id: { in: demoAccounts.map((account) => account.personId) } }
+      ]
+    },
+    include: { account: true }
+  });
+  const demoPersonIds = demoPeople.map((person) => person.id);
+  if (!demoPersonIds.length) return;
+
+  await prisma.project.updateMany({ where: { ownerId: { in: demoPersonIds } }, data: { ownerId: fallback.pm.id } });
+  await prisma.requirement.updateMany({ where: { ownerId: { in: demoPersonIds } }, data: { ownerId: fallback.pm.id } });
+  await prisma.requirement.updateMany({ where: { submitterId: { in: demoPersonIds } }, data: { submitterId: fallback.pm.id } });
+  await prisma.requirementChange.updateMany({ where: { proposerId: { in: demoPersonIds } }, data: { proposerId: fallback.pm.id } });
+  await prisma.requirementChange.updateMany({ where: { ownerId: { in: demoPersonIds } }, data: { ownerId: fallback.pm.id } });
+  await prisma.devTask.updateMany({ where: { assigneeId: { in: demoPersonIds } }, data: { assigneeId: fallback.assignee.id } });
+  await prisma.defect.updateMany({ where: { assigneeId: { in: demoPersonIds } }, data: { assigneeId: fallback.assignee.id } });
+  await prisma.defect.updateMany({ where: { reporterId: { in: demoPersonIds } }, data: { reporterId: fallback.test.id } });
+  await prisma.projectDocument.updateMany({ where: { createdById: { in: demoPersonIds } }, data: { createdById: fallback.pm.id } });
+  await prisma.releaseVersion.updateMany({ where: { releaseOwnerId: { in: demoPersonIds } }, data: { releaseOwnerId: fallback.test.id } });
+  await prisma.activityLog.updateMany({ where: { actorId: { in: demoPersonIds } }, data: { actorId: fallback.pm.id } });
+  await prisma.organization.updateMany({ where: { managerId: { in: demoPersonIds } }, data: { managerId: null } });
+  await prisma.person.updateMany({ where: { directManagerId: { in: demoPersonIds } }, data: { directManagerId: null } });
+
+  await prisma.projectMember.deleteMany({ where: { personId: { in: demoPersonIds } } });
+  await prisma.account.deleteMany({
+    where: {
+      OR: [
+        { username: { startsWith: "demo_" } },
+        { personId: { in: demoPersonIds } }
+      ]
+    }
+  });
+  await prisma.personPosition.deleteMany({ where: { personId: { in: demoPersonIds } } });
+  await prisma.person.deleteMany({ where: { id: { in: demoPersonIds } } });
+  await prisma.organization.deleteMany({ where: { code: { in: ["DEMO_PRODUCT", "DEMO_TECH", "DEMO_QA", "DEMO_OPS"] } } });
+}
+
+async function main() {
   const positions = {
     PRODUCT_MANAGER: await ensurePosition("PRODUCT_MANAGER", "产品经理"),
     UI: await ensurePosition("UI", "UI"),
@@ -187,89 +207,7 @@ async function main() {
     BUSINESS: await ensurePosition("BUSINESS", "业务")
   };
 
-  const people = {
-    pm: await ensurePerson({
-      employeeNo: "DEMO_PM_001",
-      name: "刘娜",
-      username: "demo_pm",
-      email: "demo_pm@example.local",
-      phone: "13800010001",
-      organizationId: orgs.product.id,
-      positionId: positions.PRODUCT_MANAGER.id
-    }),
-    ui: await ensurePerson({
-      employeeNo: "DEMO_UI_001",
-      name: "陈妍",
-      username: "demo_ui",
-      email: "demo_ui@example.local",
-      phone: "13800010002",
-      organizationId: orgs.tech.id,
-      positionId: positions.UI.id
-    }),
-    fe1: await ensurePerson({
-      employeeNo: "DEMO_FE_001",
-      name: "王启",
-      username: "demo_fe",
-      email: "demo_fe@example.local",
-      phone: "13800010003",
-      organizationId: orgs.tech.id,
-      positionId: positions.FRONTEND.id
-    }),
-    fe2: await ensurePerson({
-      employeeNo: "DEMO_FE_002",
-      name: "林昊",
-      username: "demo_fe2",
-      email: "demo_fe2@example.local",
-      phone: "13800010004",
-      organizationId: orgs.tech.id,
-      positionId: positions.FRONTEND.id
-    }),
-    be1: await ensurePerson({
-      employeeNo: "DEMO_BE_001",
-      name: "赵睿",
-      username: "demo_be",
-      email: "demo_be@example.local",
-      phone: "13800010005",
-      organizationId: orgs.tech.id,
-      positionId: positions.BACKEND.id
-    }),
-    be2: await ensurePerson({
-      employeeNo: "DEMO_BE_002",
-      name: "胡嘉",
-      username: "demo_be2",
-      email: "demo_be2@example.local",
-      phone: "13800010006",
-      organizationId: orgs.tech.id,
-      positionId: positions.BACKEND.id
-    }),
-    data: await ensurePerson({
-      employeeNo: "DEMO_DATA_001",
-      name: "孙澄",
-      username: "demo_data",
-      email: "demo_data@example.local",
-      phone: "13800010007",
-      organizationId: orgs.ops.id,
-      positionId: positions.DATA.id
-    }),
-    test: await ensurePerson({
-      employeeNo: "DEMO_TEST_001",
-      name: "周晴",
-      username: "demo_test",
-      email: "demo_test@example.local",
-      phone: "13800010008",
-      organizationId: orgs.qa.id,
-      positionId: positions.TEST.id
-    }),
-    ops: await ensurePerson({
-      employeeNo: "DEMO_OPS_001",
-      name: "马骁",
-      username: "demo_ops",
-      email: "demo_ops@example.local",
-      phone: "13800010009",
-      organizationId: orgs.ops.id,
-      positionId: positions.OPS.id
-    })
-  };
+  const people = await existingPeople();
 
   const projectSpecs = [
     {
@@ -661,7 +599,7 @@ async function main() {
         title: spec.title,
         projectId: requirement.projectId,
         requirementId: requirement.id,
-        type: people[spec.assigneeKey].primaryPositionId === positions.UI.id ? "UI" : people[spec.assigneeKey].primaryPositionId === positions.BACKEND.id ? "BACKEND" : people[spec.assigneeKey].primaryPositionId === positions.DATA.id ? "DATA" : people[spec.assigneeKey].primaryPositionId === positions.TEST.id ? "TEST" : people[spec.assigneeKey].primaryPositionId === positions.OPS.id ? "OPS" : "FRONTEND",
+        type: primaryPositionCode(people[spec.assigneeKey]),
         status: spec.status,
         assigneeId: people[spec.assigneeKey].id,
         plannedStartDate,
@@ -674,7 +612,7 @@ async function main() {
         title: spec.title,
         projectId: requirement.projectId,
         requirementId: requirement.id,
-        type: people[spec.assigneeKey].primaryPositionId === positions.UI.id ? "UI" : people[spec.assigneeKey].primaryPositionId === positions.BACKEND.id ? "BACKEND" : people[spec.assigneeKey].primaryPositionId === positions.DATA.id ? "DATA" : people[spec.assigneeKey].primaryPositionId === positions.TEST.id ? "TEST" : people[spec.assigneeKey].primaryPositionId === positions.OPS.id ? "OPS" : "FRONTEND",
+        type: primaryPositionCode(people[spec.assigneeKey]),
         status: spec.status,
         assigneeId: people[spec.assigneeKey].id,
         plannedStartDate,
@@ -854,17 +792,18 @@ async function main() {
     });
   }
 
+  await cleanupDemoPeople({ pm: people.pm, test: people.test, assignee: people.be1 });
+
   const counts = await Promise.all([
     prisma.project.count({ where: { code: { startsWith: "PROJ-DEMO-" } } }),
     prisma.requirement.count({ where: { code: { startsWith: "REQ-DEMO-" } } }),
     prisma.devTask.count({ where: { code: { startsWith: "TASK-DEMO-" } } }),
     prisma.defect.count({ where: { code: { startsWith: "BUG-DEMO-" } } }),
-    prisma.releaseVersion.count({ where: { code: { startsWith: "VER-DEMO-" } } }),
-    prisma.person.count({ where: { employeeNo: { startsWith: "DEMO_" } } })
+    prisma.releaseVersion.count({ where: { code: { startsWith: "VER-DEMO-" } } })
   ]);
 
-  console.log(`演示数据已准备：项目 ${counts[0]} 个，需求 ${counts[1]} 条，任务 ${counts[2]} 条，缺陷 ${counts[3]} 条，版本 ${counts[4]} 个，人员 ${counts[5]} 人。`);
-  console.log("演示账号：demo_pm / demo_ui / demo_fe / demo_be / demo_data / demo_test / demo_ops，密码均为 123。");
+  console.log(`演示数据已准备：项目 ${counts[0]} 个，需求 ${counts[1]} 条，任务 ${counts[2]} 条，缺陷 ${counts[3]} 条，版本 ${counts[4]} 个。`);
+  console.log(`演示数据已挂载到已有人员：产品 ${people.pm.name}，测试 ${people.test.name}，UI ${people.ui.name}，前端 ${people.fe1.name}/${people.fe2.name}，后端 ${people.be1.name}/${people.be2.name}。`);
 }
 
 main()
