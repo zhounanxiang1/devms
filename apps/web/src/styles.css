@@ -366,15 +366,28 @@ select[multiple] {
   padding: 16px;
 }
 
+.project-heading {
+  display: grid;
+  gap: 10px;
+}
+
 .project-summary h2 {
   margin: 0;
   font-size: 22px;
 }
 
-.project-summary p:not(.eyebrow) {
-  margin: 8px 0 0;
-  color: #53606b;
-  line-height: 1.55;
+.status-pill {
+  display: inline-flex;
+  width: max-content;
+  min-height: 26px;
+  align-items: center;
+  border: 1px solid #cfe2dc;
+  border-radius: 999px;
+  background: #eef8f5;
+  color: #126b73;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .project-picker select {
@@ -402,6 +415,54 @@ select[multiple] {
   color: #1d2935;
   font-size: 13px;
   font-weight: 650;
+}
+
+.project-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
+.project-rich-block {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.project-rich-block > span {
+  color: #667884;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rich-text-display {
+  min-height: 38px;
+  color: #354652;
+  line-height: 1.58;
+  overflow-wrap: anywhere;
+}
+
+.rich-text-display p,
+.rich-text-display ul,
+.rich-text-display ol {
+  margin: 0 0 8px;
+}
+
+.rich-text-display p:last-child,
+.rich-text-display ul:last-child,
+.rich-text-display ol:last-child {
+  margin-bottom: 0;
+}
+
+.rich-text-display ul,
+.rich-text-display ol {
+  padding-left: 20px;
+}
+
+.rich-empty {
+  color: #8a98a4;
+  font-size: 13px;
 }
 
 .tabs {
@@ -672,6 +733,79 @@ tr.due td:first-child {
   border-top: 0;
 }
 
+.rich-editor-field {
+  position: relative;
+}
+
+.rich-toolbar {
+  display: inline-flex;
+  width: max-content;
+  gap: 4px;
+  border: 1px solid #d5dee6;
+  border-radius: 6px;
+  background: #f8fafb;
+  padding: 4px;
+}
+
+.rich-toolbar button {
+  min-height: 28px;
+  width: 30px;
+  padding: 4px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.rich-toolbar button:hover {
+  border-color: #b9c7d4;
+  background: #ffffff;
+}
+
+.rich-editor {
+  min-height: 118px;
+  border: 1px solid #cbd5df;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1d2935;
+  padding: 9px 10px;
+  line-height: 1.55;
+  overflow: auto;
+  outline: none;
+}
+
+.rich-editor:focus {
+  border-color: #6d8ea8;
+  box-shadow: 0 0 0 3px rgba(18, 107, 115, 0.09);
+}
+
+.rich-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #9aa7b2;
+}
+
+.rich-editor p,
+.rich-editor ul,
+.rich-editor ol {
+  margin: 0 0 8px;
+}
+
+.rich-editor ul,
+.rich-editor ol {
+  padding-left: 20px;
+}
+
+.rich-required-proxy {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  min-height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .error {
   white-space: pre-wrap;
   background: #fff2f0;
@@ -713,6 +847,7 @@ tr.due td:first-child {
   .summary-band,
   .config-grid,
   .project-summary,
+  .project-info-grid,
   .project-meta-grid,
   .table-filters,
   .split-page,

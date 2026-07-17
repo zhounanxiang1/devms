@@ -1,10 +1,14 @@
 import {
   Archive,
+  Bold,
   CheckCircle2,
   ClipboardList,
   Gauge,
+  Italic,
   LayoutDashboard,
+  List,
   ListChecks,
+  ListOrdered,
   LogOut,
   PackageCheck,
   Pencil,
@@ -15,7 +19,7 @@ import {
   Trash2,
   Users
 } from "lucide-react";
-import { FormEvent, MouseEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api, clearToken, getToken, patch, post, setToken } from "./api";
 import { Account, AdminData, AuthState, Defect, DevTask, Organization, Person, Position, Project, ReleaseVersion, Requirement } from "./types";
 
@@ -238,6 +242,53 @@ function draftArray(draft: FormDraft | null, name: string) {
 
 function hasDraftValues(draft: FormDraft | null) {
   return Boolean(draft && Object.keys(draft).length);
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function stripRichText(value?: string | number | null) {
+  if (!value) return "";
+  if (typeof document === "undefined") return String(value).replace(/<[^>]+>/g, "").trim();
+  const container = document.createElement("div");
+  container.innerHTML = String(value);
+  return (container.textContent || "").trim();
+}
+
+function sanitizeRichTextHtml(value?: string | number | null) {
+  if (!value) return "";
+  const raw = String(value);
+  if (typeof document === "undefined") return raw;
+  const template = document.createElement("template");
+  template.innerHTML = raw;
+  const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "BR", "P", "DIV", "UL", "OL", "LI", "SPAN"]);
+  const cleanNode = (node: Node) => {
+    Array.from(node.childNodes).forEach(cleanNode);
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const element = node as HTMLElement;
+    Array.from(element.attributes).forEach((attribute) => element.removeAttribute(attribute.name));
+    if (!allowedTags.has(element.tagName)) {
+      element.replaceWith(...Array.from(element.childNodes));
+    }
+  };
+  cleanNode(template.content);
+  return template.innerHTML.trim();
+}
+
+function normalizeRichText(value?: string | number | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (/<[a-z][\s\S]*>/i.test(raw)) return sanitizeRichTextHtml(raw);
+  return raw
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
+    .join("");
 }
 
 export function App() {
@@ -796,32 +847,52 @@ function ProjectCenter({
           </label>
         </div>
         {detail ? (
-          <div className="project-summary">
-            <div>
-              <p className="eyebrow">{projectStageLabel(detail.stage)}</p>
-              <h2>{detail.name}</h2>
-              <p>{detail.scope}</p>
-            </div>
-            <div className="project-meta-grid">
-              <span>项目编号<strong>{detail.code}</strong></span>
-              <span>计划周期<strong>{fmtDate(detail.plannedStartDate)} - {fmtDate(detail.plannedEndDate)}</strong></span>
-              <span>期望上线<strong>{fmtDate(detail.expectedLaunchDate)}</strong></span>
-              <span>项目负责人<strong>{detail.owner?.name || "-"}</strong></span>
-            </div>
-            <div className="actions">
-              {isProductManager ? (
-                <button onClick={() => onNew("project", { editProjectId: detail.id })}>
-                  <Pencil size={17} /> 编辑项目
+          <>
+            <div className="project-summary">
+              <div className="project-heading">
+                <span className="status-pill">项目状态：{projectStageLabel(detail.stage)}</span>
+                <h2>{detail.name}</h2>
+                <div className="project-rich-block">
+                  <span>需求范围</span>
+                  <RichTextDisplay value={detail.scope} />
+                </div>
+              </div>
+              <div className="project-meta-grid">
+                <span>项目编号<strong>{detail.code}</strong></span>
+                <span>当前阶段<strong>{projectStageLabel(detail.stage)}</strong></span>
+                <span>计划周期<strong>{fmtDate(detail.plannedStartDate)} - {fmtDate(detail.plannedEndDate)}</strong></span>
+                <span>期望上线<strong>{fmtDate(detail.expectedLaunchDate)}</strong></span>
+                <span>项目负责人<strong>{detail.owner?.name || "-"}</strong></span>
+              </div>
+              <div className="actions">
+                {isProductManager ? (
+                  <button onClick={() => onNew("project", { editProjectId: detail.id })}>
+                    <Pencil size={17} /> 编辑项目
+                  </button>
+                ) : null}
+                <button onClick={() => onNew("requirement", { projectId: detail.id })}>
+                  <Plus size={17} /> 需求
                 </button>
-              ) : null}
-              <button onClick={() => onNew("requirement", { projectId: detail.id })}>
-                <Plus size={17} /> 需求
-              </button>
-              <button onClick={() => onNew("document", { projectId: detail.id })}>
-                <Plus size={17} /> 资料
-              </button>
+                <button onClick={() => onNew("document", { projectId: detail.id })}>
+                  <Plus size={17} /> 资料
+                </button>
+              </div>
             </div>
-          </div>
+            <div className="project-info-grid">
+              <div className="project-rich-block">
+                <span>项目背景</span>
+                <RichTextDisplay value={detail.background} />
+              </div>
+              <div className="project-rich-block">
+                <span>项目目标</span>
+                <RichTextDisplay value={detail.goal} />
+              </div>
+              <div className="project-rich-block">
+                <span>涉及系统</span>
+                <RichTextDisplay value={detail.relatedSystems} />
+              </div>
+            </div>
+          </>
         ) : (
           <EmptyState text="暂无项目" />
         )}
@@ -1802,6 +1873,9 @@ function CreateDrawer({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const body: Record<string, any> = Object.fromEntries(form.entries());
+    Object.keys(body).forEach((key) => {
+      if (key.endsWith("__required")) delete body[key];
+    });
     if (activeDrawerKind === "version") {
       body.requirementIds = form.getAll("requirementIds").map(Number) as any;
       body.defectIds = form.getAll("defectIds").map(Number) as any;
@@ -1834,7 +1908,7 @@ function CreateDrawer({
           {activeDrawerKind === "project" ? (
             <>
               <Field name="name" label="项目名称" required defaultValue={draftValue(draft, "name", editingProject?.name)} />
-              <Textarea name="scope" label="需求范围" required defaultValue={draftValue(draft, "scope", editingProject?.scope)} />
+              <RichTextEditor name="scope" label="需求范围" required defaultValue={draftValue(draft, "scope", editingProject?.scope)} />
               <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate", editingProject ? toDateInput(editingProject.plannedStartDate) : todayDateInput())} />
               <Field name="plannedEndDate" label="计划结束时间" type="date" defaultValue={draftValue(draft, "plannedEndDate", toDateInput(editingProject?.plannedEndDate))} />
               <Field name="expectedLaunchDate" label="期望上线时间" type="date" defaultValue={draftValue(draft, "expectedLaunchDate", toDateInput(editingProject?.expectedLaunchDate))} />
@@ -1844,9 +1918,9 @@ function CreateDrawer({
                 <ReadonlyField name="stage" label="当前阶段" value="INITIATED" displayValue="已立项" />
               )}
               <PeopleSelect name="ownerId" label="项目负责人" people={productManagers} required defaultValue={draftValue(draft, "ownerId", defaultProjectOwnerId)} />
-              <Textarea name="background" label="项目背景" defaultValue={draftValue(draft, "background", editingProject?.background)} />
-              <Textarea name="goal" label="项目目标" defaultValue={draftValue(draft, "goal", editingProject?.goal)} />
-              <Textarea name="relatedSystems" label="涉及系统" defaultValue={draftValue(draft, "relatedSystems", editingProject?.relatedSystems)} />
+              <RichTextEditor name="background" label="项目背景" defaultValue={draftValue(draft, "background", editingProject?.background)} />
+              <RichTextEditor name="goal" label="项目目标" defaultValue={draftValue(draft, "goal", editingProject?.goal)} />
+              <RichTextEditor name="relatedSystems" label="涉及系统" defaultValue={draftValue(draft, "relatedSystems", editingProject?.relatedSystems)} />
             </>
           ) : null}
           {activeDrawerKind === "requirement" ? (
@@ -2007,6 +2081,79 @@ function Textarea({ name, label: text, required, defaultValue }: { name: string;
     <label className={required ? "field required" : "field"}>
       <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
       <textarea name={name} required={required} defaultValue={defaultValue ?? ""} />
+    </label>
+  );
+}
+
+function RichTextDisplay({ value, emptyText = "-" }: { value?: string | number | null; emptyText?: string }) {
+  const html = normalizeRichText(value);
+  if (!html) return <span className="rich-empty">{emptyText}</span>;
+  return <div className="rich-text-display" dangerouslySetInnerHTML={{ __html: sanitizeRichTextHtml(html) }} />;
+}
+
+function RichTextEditor({
+  name,
+  label: text,
+  required,
+  defaultValue
+}: {
+  name: string;
+  label: string;
+  required?: boolean;
+  defaultValue?: string | number | null;
+}) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const initialHtmlRef = useRef(normalizeRichText(defaultValue));
+  const [html, setHtml] = useState(initialHtmlRef.current);
+  const sanitizedHtml = sanitizeRichTextHtml(html);
+
+  function syncFromEditor() {
+    setHtml(editorRef.current?.innerHTML || "");
+  }
+
+  function runCommand(command: string) {
+    editorRef.current?.focus();
+    document.execCommand(command, false);
+    syncFromEditor();
+  }
+
+  function cleanEditor() {
+    const clean = sanitizeRichTextHtml(editorRef.current?.innerHTML || "");
+    if (editorRef.current && editorRef.current.innerHTML !== clean) {
+      editorRef.current.innerHTML = clean;
+    }
+    setHtml(clean);
+  }
+
+  return (
+    <label className={required ? "field required rich-editor-field" : "field rich-editor-field"}>
+      <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
+      <div className="rich-toolbar" aria-label={`${text}格式工具`}>
+        <button type="button" title="加粗" onMouseDown={(event) => { event.preventDefault(); runCommand("bold"); }}>
+          <Bold size={15} />
+        </button>
+        <button type="button" title="斜体" onMouseDown={(event) => { event.preventDefault(); runCommand("italic"); }}>
+          <Italic size={15} />
+        </button>
+        <button type="button" title="无序列表" onMouseDown={(event) => { event.preventDefault(); runCommand("insertUnorderedList"); }}>
+          <List size={15} />
+        </button>
+        <button type="button" title="有序列表" onMouseDown={(event) => { event.preventDefault(); runCommand("insertOrderedList"); }}>
+          <ListOrdered size={15} />
+        </button>
+      </div>
+      <div
+        ref={editorRef}
+        className="rich-editor"
+        contentEditable
+        data-placeholder={`填写${text}`}
+        suppressContentEditableWarning
+        onInput={syncFromEditor}
+        onBlur={cleanEditor}
+        dangerouslySetInnerHTML={{ __html: initialHtmlRef.current }}
+      />
+      <input type="hidden" name={name} value={sanitizedHtml} />
+      {required ? <textarea className="rich-required-proxy" name={`${name}__required`} value={stripRichText(sanitizedHtml)} required onChange={() => undefined} tabIndex={-1} aria-hidden="true" /> : null}
     </label>
   );
 }
