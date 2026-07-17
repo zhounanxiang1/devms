@@ -33,6 +33,11 @@ const REQUIREMENT_REVISION_BONUS: Record<RequirementRevisionType, Record<Require
   }
 };
 
+function startOfToday() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
 @Injectable()
 export class CoreService {
   constructor(private readonly prisma: PrismaService) {}
@@ -166,16 +171,30 @@ export class CoreService {
   }
 
   async createProject(user: AuthUser, body: any) {
+    requireAnyPosition(user, [PRODUCT_MANAGER], "只有产品经理可以创建项目");
+    const ownerId = toInt(body.ownerId);
+    if (!ownerId) throw new BadRequestException("项目负责人必填");
+    const owner = await this.prisma.person.findUnique({
+      where: { id: ownerId },
+      include: includePerson
+    });
+    const ownerPositions = new Set([
+      owner?.primaryPosition?.code,
+      ...(owner?.positions.map((item) => item.position.code) || [])
+    ].filter(Boolean));
+    if (!owner || !ownerPositions.has(PRODUCT_MANAGER)) {
+      throw new BadRequestException("项目负责人只能选择产品经理岗位人员");
+    }
     const project = await this.prisma.project.create({
       data: {
         code: body.code || code("PROJ"),
         name: body.name,
-        ownerId: toInt(body.ownerId),
+        ownerId,
         scope: body.scope || "",
-        plannedStartDate: toDate(body.plannedStartDate),
+        plannedStartDate: toDate(body.plannedStartDate) || startOfToday(),
         plannedEndDate: toDate(body.plannedEndDate),
         expectedLaunchDate: toDate(body.expectedLaunchDate),
-        stage: body.stage || "INITIATED",
+        stage: "INITIATED",
         background: body.background,
         goal: body.goal,
         relatedSystems: body.relatedSystems
@@ -213,23 +232,9 @@ export class CoreService {
   async updateProject(user: AuthUser, id: number, body: any) {
     const before = await this.prisma.project.findUnique({ where: { id } });
     if (!before) throw new NotFoundException("项目不存在");
-    const project = await this.prisma.project.update({
-      where: { id },
-      data: pickDefined({
-        name: body.name,
-        ownerId: toInt(body.ownerId),
-        scope: body.scope,
-        plannedStartDate: toDate(body.plannedStartDate),
-        plannedEndDate: toDate(body.plannedEndDate),
-        expectedLaunchDate: toDate(body.expectedLaunchDate),
-        stage: body.stage,
-        background: body.background,
-        goal: body.goal,
-        relatedSystems: body.relatedSystems
-      })
-    });
-    await this.log({ user, entityType: "PROJECT", entityId: id, projectId: id, action: "UPDATE", summary: `更新项目：${project.name}`, beforeJson: before, afterJson: project });
-    return project;
+    void user;
+    void body;
+    throw new BadRequestException("项目创建后不支持编辑项目信息");
   }
 
   async listRequirements(projectId?: number) {

@@ -77,7 +77,7 @@ const positionLabels: Record<string, string> = {
 const dictionaryTypeMeta: Record<string, { name: string; usage: string }> = {
   PROJECT_STAGE: {
     name: "项目阶段",
-    usage: "用于项目新建/编辑的当前阶段，以及项目中心的阶段展示。"
+    usage: "用于项目中心的阶段展示；新建项目默认已立项，不在表单中手动选择。"
   },
   REQUIREMENT_STATUS: {
     name: "需求状态",
@@ -141,9 +141,21 @@ function toDateInput(value?: string | null) {
   return String(value).slice(0, 10);
 }
 
+function todayDateInput() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function isDue(value?: string) {
   if (!value) return false;
   return new Date(value).getTime() - Date.now() < 1000 * 60 * 60 * 24 * 2;
+}
+
+function isProductManagerPerson(person?: Pick<Person, "primaryPosition" | "positions"> | null) {
+  return person?.primaryPosition?.code === "PRODUCT_MANAGER" || Boolean(person?.positions?.some((item) => item.position.code === "PRODUCT_MANAGER"));
 }
 
 function dictionaryOptions(
@@ -1607,7 +1619,7 @@ function CreateDrawer({
   requirements: Requirement[];
   tasks: DevTask[];
   defects: Defect[];
-  people: Array<{ id: number; name: string }>;
+  people: Person[];
   positions: Array<{ code: string; name: string; isActive?: boolean }>;
   dictionaries: AdminData["dictionaries"];
   requirementPriorities: AdminData["requirementPriorities"];
@@ -1640,14 +1652,8 @@ function CreateDrawer({
   const contextProject = selectedProject || selectedTask?.project || selectedRequirement?.project || (selectedRequirement?.projectId ? projects.find((project) => project.id === selectedRequirement.projectId) : null);
   const currentPositionCode = currentUser.primaryPosition || currentUser.positions[0] || "";
   const currentPersonId = currentPerson?.id || currentUser.personId;
-  const projectStageOptions = dictionaryOptions(dictionaries, "PROJECT_STAGE", [
-    ["INITIATED", "已立项"],
-    ["RESEARCHING", "需求调研"],
-    ["SOLUTION_DESIGN", "方案设计"],
-    ["DEV_TEST", "系统开发与测试"],
-    ["ONLINE_OPS", "上线运维"],
-    ["CLOSED", "已结项"]
-  ]);
+  const productManagers = people.filter(isProductManagerPerson);
+  const defaultProjectOwnerId = isProductManagerPerson(currentPerson) ? currentPersonId : productManagers[0]?.id;
   const requirementTypeOptions = dictionaryOptions(dictionaries, "REQUIREMENT_TYPE", [["FEATURE", "功能需求"], ["PROCESS", "流程需求"], ["DATA", "数据需求"], ["REPORT", "报表需求"], ["UX", "体验优化"]]);
   const requirementLaunchStatusOptions = dictionaryOptions(dictionaries, "REQUIREMENT_LAUNCH_STATUS", [["TO_RELEASE", "待上线"], ["RELEASED", "已上线"]]);
   const taskTypeOptions = positions.length ? positions.filter((item) => item.isActive !== false).map((item) => [item.code, item.name] as [string, string]) : dictionaryOptions(dictionaries, "TASK_TYPE", [["UI", "UI设计"], ["FRONTEND", "前端开发"], ["BACKEND", "后端开发"], ["DATA", "数据开发"], ["TEST", "测试验证"]]);
@@ -1699,11 +1705,11 @@ function CreateDrawer({
             <>
               <Field name="name" label="项目名称" required defaultValue={draftValue(draft, "name")} />
               <Textarea name="scope" label="需求范围" required defaultValue={draftValue(draft, "scope")} />
-              <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate")} />
+              <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate", todayDateInput())} />
               <Field name="plannedEndDate" label="计划结束时间" type="date" defaultValue={draftValue(draft, "plannedEndDate")} />
               <Field name="expectedLaunchDate" label="期望上线时间" type="date" defaultValue={draftValue(draft, "expectedLaunchDate")} />
-              <Select name="stage" label="当前阶段" options={projectStageOptions} defaultValue={draftValue(draft, "stage", "INITIATED")} />
-              <PeopleSelect name="ownerId" label="项目负责人" people={people} defaultValue={draftValue(draft, "ownerId")} />
+              <ReadonlyField name="stage" label="当前阶段" value="INITIATED" displayValue="已立项" />
+              <PeopleSelect name="ownerId" label="项目负责人" people={productManagers} required defaultValue={draftValue(draft, "ownerId", defaultProjectOwnerId)} />
             </>
           ) : null}
           {activeDrawerKind === "requirement" ? (
@@ -1815,8 +1821,20 @@ function ProjectSelect({ projects, defaultValue }: { projects: Project[]; defaul
   return <Select name="projectId" label="所属项目" defaultValue={defaultValue} options={projects.map((project) => [String(project.id), project.name])} />;
 }
 
-function PeopleSelect({ name, label: text, people, defaultValue }: { name: string; label: string; people: Array<{ id: number; name: string }>; defaultValue?: string | number | null }) {
-  return <Select name={name} label={text} defaultValue={defaultValue} options={[["", "未指定"], ...people.map((person) => [String(person.id), person.name] as [string, string])]} />;
+function PeopleSelect({
+  name,
+  label: text,
+  people,
+  defaultValue,
+  required
+}: {
+  name: string;
+  label: string;
+  people: Array<{ id: number; name: string }>;
+  defaultValue?: string | number | null;
+  required?: boolean;
+}) {
+  return <Select name={name} label={text} required={required} defaultValue={defaultValue} options={[["", "未指定"], ...people.map((person) => [String(person.id), person.name] as [string, string])]} />;
 }
 
 function Field({
