@@ -18,7 +18,8 @@ import {
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from "react";
 import { api, clearToken, getToken, patch, post, setToken } from "./api";
 import { Badge, EmptyState, ListSection, Metric } from "./components/common";
-import { Field, MultiSelect, PeopleSelect, ProjectSelect, ReadonlyField, Select, Textarea } from "./components/formControls";
+import { DisplayField, Field, MultiSelect, PeopleSelect, ProjectSelect, ReadonlyField, Select, Textarea } from "./components/formControls";
+import { ProjectLifecycleAction, ProjectLifecycleDialog } from "./components/ProjectLifecycleDialog";
 import { RichTextDisplay, RichTextEditor } from "./components/RichText";
 import { ScheduleDialog, ScheduleEditState } from "./components/ScheduleDialog";
 import { clearFormDraft, draftArray, draftValue, FORM_DRAFT_PREFIX, hasDraftValues, readFormDraft, writeFormDraft } from "./lib/formDraft";
@@ -53,6 +54,7 @@ export function App() {
   const [adminEdit, setAdminEdit] = useState<AdminEditState>(null);
   const [reviewTarget, setReviewTarget] = useState<Requirement | null>(null);
   const [scheduleEdit, setScheduleEdit] = useState<ScheduleEditState | null>(null);
+  const [projectLifecycle, setProjectLifecycle] = useState<{ project: Project; action: ProjectLifecycleAction } | null>(null);
 
   const isProductManager = auth?.user.positions.includes("PRODUCT_MANAGER") || false;
   const canPublish = auth?.user.positions.some((item) => item === "PRODUCT_MANAGER" || item === "TEST") || false;
@@ -293,7 +295,7 @@ export function App() {
             <p className="eyebrow">{auth.user.positions.map(label).join(" / ")}</p>
             <h1>{nav.find(([id]) => id === view)?.[1]}</h1>
           </div>
-          <QuickActions openDrawer={openDrawer} isProductManager={isProductManager} canPublish={canPublish} hasProjects={projects.length > 0} />
+          <QuickActions openDrawer={openDrawer} isProductManager={isProductManager} canPublish={canPublish} hasProjects={projects.length > 0} hasOpenProjects={projects.some((project) => project.stage !== "CLOSED")} />
         </header>
 
         {error ? <pre className="error">{error}</pre> : null}
@@ -339,6 +341,7 @@ export function App() {
             onCloseDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/close`, { reason: "手动关闭" }), "project")}
             onReopenDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reopen`, { reason: "重新开启" }), "project")}
             onReviewRequirement={setReviewTarget}
+            onProjectLifecycle={(project, action) => setProjectLifecycle({ project, action })}
             canTest={canTest}
             isProductManager={isProductManager}
             currentPersonId={auth.user.personId}
@@ -411,6 +414,17 @@ export function App() {
         }}
       />
 
+      <ProjectLifecycleDialog
+        project={projectLifecycle?.project || null}
+        action={projectLifecycle?.action || null}
+        onClose={() => setProjectLifecycle(null)}
+        onSubmit={async (project, action, body) => {
+          const success = await handleAction(() => post(`/projects/${project.id}/${action}`, body), "project");
+          if (success) setProjectLifecycle(null);
+          return success;
+        }}
+      />
+
       <CreateDrawer
         kind={drawer}
         context={drawerContext}
@@ -463,14 +477,17 @@ function QuickActions({
   openDrawer,
   isProductManager,
   canPublish,
-  hasProjects
+  hasProjects,
+  hasOpenProjects
 }: {
   openDrawer: (kind: DrawerKind, context?: DrawerContext) => void;
   isProductManager: boolean;
   canPublish: boolean;
   hasProjects: boolean;
+  hasOpenProjects: boolean;
 }) {
   const projectRequiredTitle = hasProjects ? undefined : "请先新建项目";
+  const openProjectRequiredTitle = hasOpenProjects ? undefined : hasProjects ? "没有可继续维护的项目，请先重新打开项目" : "请先新建项目";
   return (
     <div className="actions">
       {isProductManager ? (
@@ -478,7 +495,7 @@ function QuickActions({
           <button onClick={() => openDrawer("project")} title="新建项目">
             <Plus size={17} /> 新建项目
           </button>
-          <button onClick={() => openDrawer("requirement")} title={projectRequiredTitle || "新建需求"} disabled={!hasProjects}>
+          <button onClick={() => openDrawer("requirement")} title={openProjectRequiredTitle || "新建需求"} disabled={!hasOpenProjects}>
             <ClipboardList size={17} /> 新建需求
           </button>
         </>
@@ -487,7 +504,7 @@ function QuickActions({
         <Archive size={17} /> 新增资料
       </button>
       {canPublish ? (
-        <button onClick={() => openDrawer("version")} title={projectRequiredTitle || "新建版本"} disabled={!hasProjects}>
+        <button onClick={() => openDrawer("version")} title={openProjectRequiredTitle || "新建版本"} disabled={!hasOpenProjects}>
           <Rocket size={17} /> 新建版本
         </button>
       ) : null}
@@ -593,6 +610,7 @@ function ProjectCenter({
   onCloseDefect,
   onReopenDefect,
   onReviewRequirement,
+  onProjectLifecycle,
   canTest,
   isProductManager,
   currentPersonId
@@ -614,6 +632,7 @@ function ProjectCenter({
   onCloseDefect: (defect: Defect) => void;
   onReopenDefect: (defect: Defect) => void;
   onReviewRequirement: (requirement: Requirement) => void;
+  onProjectLifecycle: (project: Project, action: ProjectLifecycleAction) => void;
   canTest: boolean;
   isProductManager: boolean;
   currentPersonId: number;
@@ -628,6 +647,7 @@ function ProjectCenter({
   const normalizedKeyword = keyword.trim().toLowerCase();
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || detail;
   const canEditProject = isProductManager || detail?.owner?.id === currentPersonId || detail?.ownerId === currentPersonId;
+  const isProjectClosed = detail?.stage === "CLOSED";
   const statusOptions = useMemo(() => {
     const source = activeTab === "requirements" ? requirements : activeTab === "tasks" ? tasks : defects;
     return Array.from(new Set(source.map((item: any) => item.status).filter(Boolean)));
@@ -702,7 +722,17 @@ function ProjectCenter({
                     <Pencil size={17} /> 编辑项目
                   </button>
                 ) : null}
-                <button onClick={() => onNew("requirement", { projectId: detail.id })}>
+                {canEditProject && !isProjectClosed ? (
+                  <button onClick={() => onProjectLifecycle(detail, "close")}>
+                    <CheckCircle2 size={17} /> 项目结项
+                  </button>
+                ) : null}
+                {canEditProject && isProjectClosed ? (
+                  <button onClick={() => onProjectLifecycle(detail, "reopen")}>
+                    <Rocket size={17} /> 重新打开
+                  </button>
+                ) : null}
+                <button disabled={isProjectClosed} title={isProjectClosed ? "项目已结项，不能新增需求" : "新增需求"} onClick={() => onNew("requirement", { projectId: detail.id })}>
                   <Plus size={17} /> 需求
                 </button>
                 <button onClick={() => onNew("document", { projectId: detail.id })}>
@@ -752,6 +782,7 @@ function ProjectCenter({
               onRevision={(requirement, revisionMode) => onNew("requirement", { projectId: requirement.projectId, requirementId: requirement.id, revisionMode })}
               onReview={onReviewRequirement}
               isProductManager={isProductManager}
+              isProjectClosed={isProjectClosed}
             />
           ) : null}
           {activeTab === "tasks" ? (
@@ -765,6 +796,7 @@ function ProjectCenter({
               onNewDefect={(task) => onNew("defect", { projectId: task.project?.id || task.requirement?.projectId, requirementId: task.requirement?.id, taskId: task.id })}
               canTest={canTest}
               isProductManager={isProductManager}
+              isProjectClosed={isProjectClosed}
             />
           ) : null}
           {activeTab === "defects" ? (
@@ -1305,7 +1337,8 @@ function TaskTable({
   onClose,
   onNewDefect,
   canTest,
-  isProductManager
+  isProductManager,
+  isProjectClosed
 }: {
   tasks: DevTask[];
   onEdit?: (task: DevTask) => void;
@@ -1317,6 +1350,7 @@ function TaskTable({
   onNewDefect?: (task: DevTask) => void;
   canTest?: boolean;
   isProductManager?: boolean;
+  isProjectClosed?: boolean;
 }) {
   const canPassTask = (task: DevTask) => !task.defects?.some((defect) => !["VERIFIED", "CLOSED"].includes(defect.status));
   return (
@@ -1352,7 +1386,11 @@ function TaskTable({
               <td>{task.priorityScore}</td>
               <td className="row-actions">
                 {onEdit ? <button className="compact" onClick={() => onEdit(task)}>编辑</button> : null}
-                {onNewDefect ? <button className="compact" onClick={() => onNewDefect(task)}><Plus size={15} /> 缺陷</button> : null}
+                {onNewDefect ? (
+                  <button className="compact" disabled={isProjectClosed} title={isProjectClosed ? "项目已结项，不能新增缺陷" : "创建缺陷"} onClick={() => onNewDefect(task)}>
+                    <Plus size={15} /> 缺陷
+                  </button>
+                ) : null}
                 {onStart && task.status === "TODO" ? <button className="compact primary" onClick={() => onStart(task)}>开始处理</button> : null}
                 {onComplete && task.status === "DOING" ? <button className="compact primary" onClick={() => onComplete(task)}>处理完成</button> : null}
                 {canTest && onStartTest && task.status === "TO_TEST" ? <button className="compact primary" onClick={() => onStartTest(task)}>开始测试</button> : null}
@@ -1454,7 +1492,8 @@ function RequirementTable({
   onNewTask,
   onRevision,
   onReview,
-  isProductManager
+  isProductManager,
+  isProjectClosed
 }: {
   requirements: Requirement[];
   project?: Project | null;
@@ -1462,10 +1501,15 @@ function RequirementTable({
   onRevision: (requirement: Requirement, revisionMode: "CHANGE" | "OPTIMIZATION") => void;
   onReview: (requirement: Requirement) => void;
   isProductManager?: boolean;
+  isProjectClosed?: boolean;
 }) {
   const canOperateRequirement = (requirement: Requirement) => !["CHANGE", "OPTIMIZATION"].includes(requirement.status);
-  const canCreateTask = (requirement: Requirement) => ["APPROVED", "DEVELOPING"].includes(requirement.status);
+  const canCreateTask = (requirement: Requirement) => !isProjectClosed && ["APPROVED", "DEVELOPING"].includes(requirement.status);
   const canReview = (requirement: Requirement) => isProductManager && ["TO_REVIEW", "NEEDS_SUPPLEMENT"].includes(requirement.status);
+  const taskButtonTitle = (requirement: Requirement) => {
+    if (isProjectClosed) return "项目已结项，不能创建任务";
+    return canCreateTask(requirement) ? "创建任务" : "评审通过或开发中才可以创建任务";
+  };
   return (
     <section className="table-section">
       <div className="section-title">
@@ -1502,7 +1546,7 @@ function RequirementTable({
               <td>{(item as any)._count?.tasks ?? "-"}</td>
               <td className="row-actions">
                 {canReview(item) ? <button className="compact primary" onClick={() => onReview(item)}>评审</button> : null}
-                <button className="compact" disabled={!canCreateTask(item)} title={canCreateTask(item) ? "创建任务" : "评审通过或开发中才可以创建任务"} onClick={() => onNewTask(item)}>
+                <button className="compact" disabled={!canCreateTask(item)} title={taskButtonTitle(item)} onClick={() => onNewTask(item)}>
                   <Plus size={15} /> 任务
                 </button>
                 {isProductManager && canOperateRequirement(item) ? <button className="compact" onClick={() => onRevision(item, "CHANGE")}>变更</button> : null}
@@ -1670,9 +1714,16 @@ function CreateDrawer({
   const draftRestored = hasDraftValues(draft);
   const [draftMessage, setDraftMessage] = useState("");
   const [draftStamp, setDraftStamp] = useState(0);
+  const [versionProjectId, setVersionProjectId] = useState("");
+  const openProjectFallbackId = projects.find((project) => project.stage !== "CLOSED")?.id || "";
   useEffect(() => {
     setDraftMessage("");
   }, [draftKey]);
+  useEffect(() => {
+    if (kind === "version") {
+      setVersionProjectId(String(draftValue(draft, "projectId", openProjectFallbackId) || ""));
+    }
+  }, [kind, draftKey, openProjectFallbackId]);
   if (!activeKind) return null;
   const activeDrawerKind = activeKind;
   const selectedProject = context.projectId ? projects.find((project) => project.id === context.projectId) : null;
@@ -1682,11 +1733,24 @@ function CreateDrawer({
     ? requirements.find((requirement) => requirement.id === context.requirementId)
     : selectedTask?.requirement || null;
   const contextProject = editingProject || selectedProject || selectedTask?.project || selectedRequirement?.project || (selectedRequirement?.projectId ? projects.find((project) => project.id === selectedRequirement.projectId) : null);
+  const openProjects = projects.filter((project) => project.stage !== "CLOSED");
+  const openProjectIds = new Set(openProjects.map((project) => project.id));
+  const selectableProjects = activeDrawerKind === "document" ? projects : openProjects;
+  const selectableTaskRequirements = requirements.filter((item) => openProjectIds.has(item.projectId) && ["APPROVED", "DEVELOPING"].includes(item.status));
+  const selectableDefectTasks = tasks.filter((item) => {
+    const projectId = item.project?.id || item.requirement?.projectId;
+    return Boolean(projectId && openProjectIds.has(projectId) && !["TEST_PASSED", "CLOSED"].includes(item.status));
+  });
+  const selectedVersionProjectId = Number(versionProjectId || openProjectFallbackId || 0);
+  const selectableVersionRequirements = requirements.filter((item) => item.projectId === selectedVersionProjectId && openProjectIds.has(item.projectId) && item.status === "COMPLETED" && (item.launchStatus || "TO_RELEASE") === "TO_RELEASE");
+  const selectableVersionDefects = defects.filter((item) => {
+    const projectId = item.project?.id || item.task?.project?.id || item.task?.requirement?.projectId;
+    return Boolean(projectId && projectId === selectedVersionProjectId && openProjectIds.has(projectId) && ["VERIFIED", "CLOSED"].includes(item.status));
+  });
   const currentPositionCode = currentUser.primaryPosition || currentUser.positions[0] || "";
   const currentPersonId = currentPerson?.id || currentUser.personId;
   const productManagers = people.filter(isProductManagerPerson);
   const defaultProjectOwnerId = editingProject?.ownerId || editingProject?.owner?.id || (isProductManagerPerson(currentPerson) ? currentPersonId : productManagers[0]?.id);
-  const projectStageOptions = dictionaryOptions(dictionaries, "PROJECT_STAGE", [["INITIATED", "已立项"], ["RESEARCHING", "需求调研"], ["SOLUTION_DESIGN", "方案设计"], ["DEV_TEST", "系统开发与测试"], ["ONLINE_OPS", "上线运维"], ["CLOSED", "已结项"]]);
   const requirementTypeOptions = dictionaryOptions(dictionaries, "REQUIREMENT_TYPE", [["FEATURE", "功能需求"], ["PROCESS", "流程需求"], ["DATA", "数据需求"], ["REPORT", "报表需求"], ["UX", "体验优化"]]);
   const requirementLaunchStatusOptions = dictionaryOptions(dictionaries, "REQUIREMENT_LAUNCH_STATUS", [["TO_RELEASE", "待上线"], ["RELEASED", "已上线"]]);
   const taskTypeOptions = positions.length ? positions.filter((item) => item.isActive !== false).map((item) => [item.code, item.name] as [string, string]) : dictionaryOptions(dictionaries, "TASK_TYPE", [["UI", "UI设计"], ["FRONTEND", "前端开发"], ["BACKEND", "后端开发"], ["DATA", "数据开发"], ["TEST", "测试验证"]]);
@@ -1750,11 +1814,7 @@ function CreateDrawer({
               <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate", editingProject ? toDateInput(editingProject.plannedStartDate) : todayDateInput())} />
               <Field name="plannedEndDate" label="计划结束时间" type="date" defaultValue={draftValue(draft, "plannedEndDate", toDateInput(editingProject?.plannedEndDate))} />
               <Field name="expectedLaunchDate" label="期望上线时间" type="date" defaultValue={draftValue(draft, "expectedLaunchDate", toDateInput(editingProject?.expectedLaunchDate))} />
-              {editingProject ? (
-                <Select name="stage" label="当前阶段" options={projectStageOptions} defaultValue={draftValue(draft, "stage", editingProject.stage || "INITIATED")} />
-              ) : (
-                <ReadonlyField name="stage" label="当前阶段" value="INITIATED" displayValue="已立项" />
-              )}
+              <DisplayField label="当前阶段" value={editingProject ? projectStageLabel(editingProject.stage) : "已立项"} />
               <PeopleSelect name="ownerId" label="项目负责人" people={productManagers} required defaultValue={draftValue(draft, "ownerId", defaultProjectOwnerId)} />
               <RichTextEditor name="background" label="项目背景" defaultValue={draftValue(draft, "background", editingProject?.background)} />
               <RichTextEditor name="goal" label="项目目标" defaultValue={draftValue(draft, "goal", editingProject?.goal)} />
@@ -1769,7 +1829,7 @@ function CreateDrawer({
               {contextProject ? (
                 <ReadonlyField name="projectId" label="所属项目" value={contextProject.id} displayValue={`${contextProject.name}（${contextProject.code}）`} />
               ) : (
-                <ProjectSelect projects={projects} defaultValue={draftValue(draft, "projectId")} />
+                <ProjectSelect projects={selectableProjects} defaultValue={draftValue(draft, "projectId")} />
               )}
               {context.revisionMode ? (
                 <Select name="launchStatus" label="上线状态" options={requirementLaunchStatusOptions} defaultValue={draftValue(draft, "launchStatus", "TO_RELEASE")} />
@@ -1789,7 +1849,7 @@ function CreateDrawer({
                   <ReadonlyField name="requirementId" label="关联需求" value={selectedRequirement.id} displayValue={`${selectedRequirement.title}（${selectedRequirement.code}）`} />
                 </>
               ) : (
-                <Select name="requirementId" label="关联需求" options={requirements.map((item) => [String(item.id), item.title])} defaultValue={draftValue(draft, "requirementId")} />
+                <Select name="requirementId" label="关联需求" options={selectableTaskRequirements.map((item) => [String(item.id), item.title])} defaultValue={draftValue(draft, "requirementId")} />
               )}
               <Field name="title" label="任务标题" required defaultValue={draftValue(draft, "title")} />
               <Select name="type" label="任务类型（按岗位带出）" options={taskTypeOptions} defaultValue={draftValue(draft, "type", currentPositionCode)} />
@@ -1809,7 +1869,7 @@ function CreateDrawer({
                   {selectedRequirement ? <ReadonlyField name="requirementTitle" label="对应需求" value={selectedRequirement.title} displayValue={`${selectedRequirement.title}（${selectedRequirement.code}）`} /> : null}
                 </>
               ) : (
-                <Select name="taskId" label="关联任务" required defaultValue={draftValue(draft, "taskId")} options={tasks.map((item) => [String(item.id), `${item.title} / ${item.requirement?.title || "-"}`])} />
+                <Select name="taskId" label="关联任务" required defaultValue={draftValue(draft, "taskId")} options={selectableDefectTasks.map((item) => [String(item.id), `${item.title} / ${item.requirement?.title || "-"}`])} />
               )}
               <Field name="title" label="缺陷标题" required defaultValue={draftValue(draft, "title")} />
               <Select name="level" label="缺陷等级" defaultValue={draftValue(draft, "level")} options={(defectPriorities.length ? defectPriorities.filter((item) => item.isActive !== false).map((item) => [item.code, item.name] as [string, string]) : [["L1", "1级 致命"], ["L2", "2级 严重"], ["L3", "3级 一般"], ["L4", "4级 轻微"]])} />
@@ -1820,12 +1880,12 @@ function CreateDrawer({
           ) : null}
           {activeDrawerKind === "version" ? (
             <>
-              <ProjectSelect projects={projects} defaultValue={draftValue(draft, "projectId")} />
+              <Select name="projectId" label="所属项目" options={selectableProjects.map((project) => [String(project.id), project.name])} value={versionProjectId} onChange={setVersionProjectId} />
               <Field name="name" label="版本名称" required defaultValue={draftValue(draft, "name")} />
               <Select name="type" label="版本类型" options={versionTypeOptions} defaultValue={draftValue(draft, "type")} />
               <Field name="plannedReleaseAt" label="计划上线时间" type="date" defaultValue={draftValue(draft, "plannedReleaseAt")} />
-              <MultiSelect name="requirementIds" label="上线需求" options={requirements.filter((item) => item.status === "COMPLETED" && (item.launchStatus || "TO_RELEASE") === "TO_RELEASE").map((item) => [String(item.id), item.title])} defaultValue={draftArray(draft, "requirementIds")} />
-              <MultiSelect name="defectIds" label="修复缺陷" options={defects.map((item) => [String(item.id), item.title])} defaultValue={draftArray(draft, "defectIds")} />
+              <MultiSelect name="requirementIds" label="上线需求" options={selectableVersionRequirements.map((item) => [String(item.id), item.title])} defaultValue={draftArray(draft, "requirementIds")} />
+              <MultiSelect name="defectIds" label="修复缺陷" options={selectableVersionDefects.map((item) => [String(item.id), item.title])} defaultValue={draftArray(draft, "defectIds")} />
             </>
           ) : null}
           {activeDrawerKind === "document" ? (

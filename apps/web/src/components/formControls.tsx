@@ -111,3 +111,12 @@ export function ReadonlyField({ name, label: text, value, displayValue }: { name
     </label>
   );
 }
+
+export function DisplayField({ label: text, value }: { label: string; value?: string | number | null }) {
+  return (
+    <label className="field readonly-field">
+      <span className="field-label">{text}</span>
+      <input value={value ?? "-"} readOnly aria-readonly="true" />
+    </label>
+  );
+}

@@ -28,5 +28,14 @@ export class ProjectController {
   update(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
     return this.core.updateProject(req.user, toInt(id)!, body);
   }
-}
 
+  @Post(":id/close")
+  close(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
+    return this.core.closeProject(req.user, toInt(id)!, body);
+  }
+
+  @Post(":id/reopen")
+  reopen(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
+    return this.core.reopenProject(req.user, toInt(id)!, body);
+  }
+}

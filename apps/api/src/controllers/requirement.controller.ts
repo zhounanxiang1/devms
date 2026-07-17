@@ -29,11 +29,6 @@ export class RequirementController {
     return this.core.reviewRequirement(req.user, toInt(id)!, body);
   }
 
-  @Post(":id/test-pass")
-  testPass(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
-    return this.core.markRequirementTested(req.user, toInt(id)!, body);
-  }
-
   @Post(":id/changes")
   change(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
     return this.core.createRequirementChange(req.user, toInt(id)!, body);
