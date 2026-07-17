@@ -1,0 +1,490 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountStatus {
+  ACTIVE
+  DISABLED
+  LOCKED
+}
+
+enum EmploymentStatus {
+  ACTIVE
+  LEFT
+  DISABLED
+}
+
+enum ProjectStage {
+  INITIATED
+  RESEARCHING
+  SOLUTION_DESIGN
+  DEV_TEST
+  ONLINE_OPS
+  CLOSED
+}
+
+enum RequirementStatus {
+  TO_REVIEW
+  APPROVED
+  REJECTED
+  NEEDS_SUPPLEMENT
+  DEFERRED
+  DEVELOPING
+  COMPLETED
+  CANCELED
+  CHANGE
+  OPTIMIZATION
+}
+
+enum RequirementLaunchStatus {
+  TO_RELEASE
+  RELEASED
+}
+
+enum RequirementRevisionType {
+  CHANGE
+  OPTIMIZATION
+}
+
+enum TaskStatus {
+  TODO
+  DOING
+  TO_TEST
+  TESTING
+  TEST_PASSED
+  CLOSED
+}
+
+enum DefectStatus {
+  TO_FIX
+  FIXING
+  FIXED
+  VERIFIED
+  CLOSED
+}
+
+enum VersionStatus {
+  PLANNING
+  DEVELOPING
+  TESTING
+  READY_TO_RELEASE
+  RELEASED
+  ROLLED_BACK
+  CANCELED
+}
+
+model Organization {
+  id        Int            @id @default(autoincrement())
+  name      String
+  code      String         @unique
+  parentId  Int?
+  parent    Organization?  @relation("OrgTree", fields: [parentId], references: [id])
+  children  Organization[] @relation("OrgTree")
+  managerId Int?
+  manager   Person?        @relation("OrgManager", fields: [managerId], references: [id])
+  status    String         @default("ACTIVE")
+  sort      Int            @default(0)
+  people    Person[]       @relation("PersonOrg")
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
+
+model Position {
+  id          Int              @id @default(autoincrement())
+  name        String
+  code        String           @unique
+  category    String?
+  description String?          @db.Text
+  isSystem    Boolean          @default(false)
+  isActive    Boolean          @default(true)
+  people      PersonPosition[]
+  primaryFor  Person[]         @relation("PrimaryPosition")
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model Person {
+  id                Int              @id @default(autoincrement())
+  name              String
+  employeeNo        String?          @unique
+  phone             String?
+  email             String?
+  organizationId    Int?
+  organization      Organization?    @relation("PersonOrg", fields: [organizationId], references: [id])
+  primaryPositionId Int?
+  primaryPosition   Position?        @relation("PrimaryPosition", fields: [primaryPositionId], references: [id])
+  directManagerId   Int?
+  directManager     Person?          @relation("ManagerTree", fields: [directManagerId], references: [id])
+  subordinates      Person[]         @relation("ManagerTree")
+  employmentStatus  EmploymentStatus @default(ACTIVE)
+  account           Account?
+  positions         PersonPosition[]
+  ownedProjects     Project[]        @relation("ProjectOwner")
+  memberships       ProjectMember[]
+  requirements      Requirement[]    @relation("RequirementOwner")
+  submittedReqs     Requirement[]    @relation("RequirementSubmitter")
+  tasks             DevTask[]        @relation("TaskAssignee")
+  defects           Defect[]         @relation("DefectAssignee")
+  submittedDefects  Defect[]         @relation("DefectReporter")
+  createdDocuments  ProjectDocument[]
+  proposedChanges   RequirementChange[] @relation("RequirementChangeProposer")
+  ownedChanges      RequirementChange[] @relation("RequirementChangeOwner")
+  releaseVersions   ReleaseVersion[] @relation("VersionReleaseOwner")
+  logs              ActivityLog[]
+  managedOrgs       Organization[]   @relation("OrgManager")
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+}
+
+model PersonPosition {
+  id          Int       @id @default(autoincrement())
+  personId    Int
+  positionId  Int
+  isPrimary   Boolean   @default(false)
+  effectiveAt DateTime  @default(now())
+  expiredAt   DateTime?
+  person      Person    @relation(fields: [personId], references: [id])
+  position    Position  @relation(fields: [positionId], references: [id])
+
+  @@unique([personId, positionId])
+}
+
+model Account {
+  id                 Int           @id @default(autoincrement())
+  username           String        @unique
+  passwordHash       String
+  personId           Int           @unique
+  person             Person        @relation(fields: [personId], references: [id])
+  status             AccountStatus @default(ACTIVE)
+  allowLogin         Boolean       @default(true)
+  initialPassword    Boolean       @default(true)
+  passwordUpdatedAt  DateTime?
+  lastLoginAt        DateTime?
+  failedLoginCount   Int           @default(0)
+  note               String?       @db.Text
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+}
+
+model Dictionary {
+  id          Int      @id @default(autoincrement())
+  type        String
+  code        String
+  name        String
+  description String?  @db.Text
+  isSystem    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  sort        Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([type, code])
+}
+
+model RequirementPriority {
+  id           Int      @id @default(autoincrement())
+  code         String   @unique
+  name         String
+  description  String?  @db.Text
+  baseScore    Float
+  defectWeight Float
+  sort         Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model DefectPriority {
+  id           Int      @id @default(autoincrement())
+  code         String   @unique
+  name         String
+  description  String?  @db.Text
+  onlineScore  Float
+  offlineScore Float
+  sort         Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Project {
+  id                 Int             @id @default(autoincrement())
+  code               String          @unique
+  name               String
+  ownerId            Int?
+  owner              Person?         @relation("ProjectOwner", fields: [ownerId], references: [id])
+  scope              String          @db.Text
+  plannedStartDate   DateTime?
+  plannedEndDate     DateTime?
+  expectedLaunchDate DateTime?
+  stage              ProjectStage    @default(INITIATED)
+  background         String?         @db.Text
+  goal               String?         @db.Text
+  relatedSystems     String?         @db.Text
+  isArchived         Boolean         @default(false)
+  documents          ProjectDocument[]
+  requirements       Requirement[]
+  tasks              DevTask[]
+  defects            Defect[]
+  versions           ReleaseVersion[]
+  requirementChanges RequirementChange[]
+  members            ProjectMember[]
+  logs               ActivityLog[]
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+}
+
+model ProjectMember {
+  id             Int       @id @default(autoincrement())
+  projectId      Int
+  personId       Int
+  responsibility String?
+  scope          String?   @db.Text
+  isProjectOwner Boolean   @default(false)
+  joinedAt       DateTime  @default(now())
+  leftAt         DateTime?
+  project        Project   @relation(fields: [projectId], references: [id])
+  person         Person    @relation(fields: [personId], references: [id])
+
+  @@unique([projectId, personId])
+}
+
+model ProjectDocument {
+  id            Int       @id @default(autoincrement())
+  projectId     Int
+  name          String
+  type          String
+  linkUrl       String?   @db.Text
+  attachmentUrl String?   @db.Text
+  version       String?
+  description   String?   @db.Text
+  tags          String?
+  createdById   Int?
+  project       Project   @relation(fields: [projectId], references: [id])
+  createdBy     Person?   @relation(fields: [createdById], references: [id])
+  requirements  RequirementDocument[]
+  versions      VersionDocument[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Requirement {
+  id                 Int                @id @default(autoincrement())
+  code               String             @unique
+  title              String
+  projectId          Int
+  project            Project            @relation(fields: [projectId], references: [id])
+  type               String
+  status             RequirementStatus  @default(TO_REVIEW)
+  launchStatus       RequirementLaunchStatus @default(TO_RELEASE)
+  revisionType       RequirementRevisionType?
+  priorityLevel      String             @default("P2")
+  source             String?
+  description        String             @db.Text
+  acceptanceCriteria String             @db.Text
+  reviewDate         DateTime?
+  reviewConclusion   String?
+  reviewRecord       String?            @db.Text
+  expectedLaunchDate DateTime?
+  actualLaunchDate   DateTime?
+  timingBonus        Float              @default(0)
+  timingBonusReason  String?            @db.Text
+  priorityScore      Float              @default(0)
+  ownerId            Int?
+  submitterId        Int?
+  owner              Person?            @relation("RequirementOwner", fields: [ownerId], references: [id])
+  submitter          Person?            @relation("RequirementSubmitter", fields: [submitterId], references: [id])
+  tasks              DevTask[]
+  changes            RequirementChange[] @relation("RequirementChanges")
+  linkedChanges      RequirementChange[] @relation("LinkedRequirementChange")
+  optimizationSource Requirement?        @relation("RequirementOptimizations", fields: [optimizationSourceId], references: [id])
+  optimizationSourceId Int?
+  optimizations      Requirement[]       @relation("RequirementOptimizations")
+  documents          RequirementDocument[]
+  versionLinks       VersionRequirement[]
+  logs               ActivityLog[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+}
+
+model RequirementChange {
+  id                  Int          @id @default(autoincrement())
+  code                String       @unique
+  title               String
+  projectId           Int
+  requirementId       Int
+  type                String
+  reason              String       @db.Text
+  beforeContent       String       @db.Text
+  afterContent        String       @db.Text
+  impactScope         String
+  impactDescription   String?      @db.Text
+  handlingMethod      String
+  reviewDate          DateTime?
+  reviewConclusion    String?
+  linkedRequirementId Int?
+  proposerId          Int?
+  ownerId             Int?
+  project             Project      @relation(fields: [projectId], references: [id])
+  requirement         Requirement  @relation("RequirementChanges", fields: [requirementId], references: [id])
+  linkedRequirement   Requirement? @relation("LinkedRequirementChange", fields: [linkedRequirementId], references: [id])
+  proposer            Person?      @relation("RequirementChangeProposer", fields: [proposerId], references: [id])
+  owner               Person?      @relation("RequirementChangeOwner", fields: [ownerId], references: [id])
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+}
+
+model DevTask {
+  id                Int         @id @default(autoincrement())
+  code              String      @unique
+  title             String
+  projectId         Int
+  requirementId     Int
+  type              String
+  status            TaskStatus  @default(TODO)
+  assigneeId        Int?
+  collaboratorIds   String?
+  plannedStartDate  DateTime?
+  plannedFinishDate DateTime?
+  actualStartDate   DateTime?
+  actualFinishDate  DateTime?
+  completionNote    String?     @db.Text
+  blockedReason     String?     @db.Text
+  priorityScore     Float       @default(0)
+  project           Project     @relation(fields: [projectId], references: [id])
+  requirement       Requirement @relation(fields: [requirementId], references: [id])
+  assignee          Person?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  defects           Defect[]
+  logs              ActivityLog[]
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+}
+
+model Defect {
+  id                Int          @id @default(autoincrement())
+  code              String       @unique
+  title             String
+  projectId         Int
+  taskId            Int
+  versionId         Int?
+  level             String
+  status            DefectStatus @default(TO_FIX)
+  assigneeId        Int?
+  reporterId        Int?
+  description       String       @db.Text
+  reproduceSteps    String?      @db.Text
+  actualResult      String?      @db.Text
+  expectedResult    String?      @db.Text
+  environment       String       @default("TEST")
+  attachmentUrl     String?      @db.Text
+  plannedFixDate    DateTime?
+  actualFixDate     DateTime?
+  timingBonus       Float        @default(0)
+  timingBonusReason String?      @db.Text
+  priorityScore     Float        @default(0)
+  project           Project      @relation(fields: [projectId], references: [id])
+  task              DevTask      @relation(fields: [taskId], references: [id])
+  version           ReleaseVersion? @relation("DefectFoundInVersion", fields: [versionId], references: [id])
+  assignee          Person?      @relation("DefectAssignee", fields: [assigneeId], references: [id])
+  reporter          Person?      @relation("DefectReporter", fields: [reporterId], references: [id])
+  versionLinks      VersionDefect[]
+  logs              ActivityLog[]
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
+
+model ReleaseVersion {
+  id                Int          @id @default(autoincrement())
+  code              String
+  name              String
+  projectId         Int
+  type              String
+  status            VersionStatus @default(PLANNING)
+  plannedReleaseAt  DateTime?
+  actualReleaseAt   DateTime?
+  releaseNote       String?      @db.Text
+  releaseOwnerId    Int?
+  riskNote          String?      @db.Text
+  rollbackPlan      String?      @db.Text
+  releaseConclusion String?
+  snapshotJson      Json?
+  project           Project      @relation(fields: [projectId], references: [id])
+  releaseOwner      Person?      @relation("VersionReleaseOwner", fields: [releaseOwnerId], references: [id])
+  requirements      VersionRequirement[]
+  defects           VersionDefect[]
+  reportedDefects   Defect[]       @relation("DefectFoundInVersion")
+  documents         VersionDocument[]
+  logs              ActivityLog[]
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@unique([projectId, code])
+}
+
+model VersionRequirement {
+  id            Int            @id @default(autoincrement())
+  versionId     Int
+  requirementId Int
+  version       ReleaseVersion @relation(fields: [versionId], references: [id])
+  requirement   Requirement    @relation(fields: [requirementId], references: [id])
+
+  @@unique([versionId, requirementId])
+}
+
+model VersionDefect {
+  id        Int            @id @default(autoincrement())
+  versionId Int
+  defectId  Int
+  version   ReleaseVersion @relation(fields: [versionId], references: [id])
+  defect    Defect         @relation(fields: [defectId], references: [id])
+
+  @@unique([versionId, defectId])
+}
+
+model RequirementDocument {
+  id            Int             @id @default(autoincrement())
+  requirementId Int
+  documentId    Int
+  requirement   Requirement     @relation(fields: [requirementId], references: [id])
+  document      ProjectDocument @relation(fields: [documentId], references: [id])
+
+  @@unique([requirementId, documentId])
+}
+
+model VersionDocument {
+  id         Int             @id @default(autoincrement())
+  versionId  Int
+  documentId Int
+  version    ReleaseVersion  @relation(fields: [versionId], references: [id])
+  document   ProjectDocument @relation(fields: [documentId], references: [id])
+
+  @@unique([versionId, documentId])
+}
+
+model ActivityLog {
+  id            Int       @id @default(autoincrement())
+  actorId       Int?
+  projectId     Int?
+  requirementId Int?
+  taskId        Int?
+  defectId      Int?
+  versionId     Int?
+  entityType    String
+  entityId      Int?
+  action        String
+  summary       String
+  beforeJson    Json?
+  afterJson     Json?
+  actor         Person?   @relation(fields: [actorId], references: [id])
+  project       Project?  @relation(fields: [projectId], references: [id])
+  requirement   Requirement? @relation(fields: [requirementId], references: [id])
+  task          DevTask?  @relation(fields: [taskId], references: [id])
+  defect        Defect?   @relation(fields: [defectId], references: [id])
+  version       ReleaseVersion? @relation(fields: [versionId], references: [id])
+  createdAt     DateTime  @default(now())
+}
