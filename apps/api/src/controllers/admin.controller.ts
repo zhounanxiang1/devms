@@ -15,6 +15,11 @@ export class AdminController {
     return this.core.adminBootstrap();
   }
 
+  @Get("people")
+  people() {
+    return this.core.listAssignablePeople();
+  }
+
   @Post("people")
   upsertPerson(@Req() req: AuthedRequest, @Body() body: any) {
     return this.core.upsertPerson(req.user, body);

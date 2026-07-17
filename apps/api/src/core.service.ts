@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import {
   DefectStatus,
+  EmploymentStatus,
   Prisma,
   ProjectStage,
   RequirementLaunchStatus,
@@ -616,10 +617,10 @@ export class CoreService {
         title: body.title,
         projectId: requirement.projectId,
         requirementId: requirement.id,
-        type: body.type || "BACKEND",
+        type: body.type || user.primaryPosition || user.positions[0] || "BACKEND",
         status: TaskStatus.TODO,
-        assigneeId: toInt(body.assigneeId),
-        plannedStartDate: toDate(body.plannedStartDate),
+        assigneeId: toInt(body.assigneeId) || user.personId,
+        plannedStartDate: toDate(body.plannedStartDate) || startOfToday(),
         plannedFinishDate: toDate(body.plannedFinishDate),
         priorityScore: requirement.priorityScore
       }
@@ -1074,6 +1075,14 @@ export class CoreService {
       this.prisma.activityLog.findMany({ include: { actor: true }, take: 50, orderBy: { createdAt: "desc" } })
     ]);
     return { positions, organizations, people, accounts, dictionaries, requirementPriorities, defectPriorities, logs };
+  }
+
+  async listAssignablePeople() {
+    return this.prisma.person.findMany({
+      where: { employmentStatus: EmploymentStatus.ACTIVE },
+      include: includePerson,
+      orderBy: { id: "asc" }
+    });
   }
 
   async upsertPerson(user: AuthUser, body: any) {

@@ -51,6 +51,7 @@ export function App() {
   const [defects, setDefects] = useState<Defect[]>([]);
   const [versions, setVersions] = useState<ReleaseVersion[]>([]);
   const [admin, setAdmin] = useState<AdminData | null>(null);
+  const [peopleDirectory, setPeopleDirectory] = useState<Person[]>([]);
   const [adminEdit, setAdminEdit] = useState<AdminEditState>(null);
   const [reviewTarget, setReviewTarget] = useState<Requirement | null>(null);
   const [scheduleEdit, setScheduleEdit] = useState<ScheduleEditState | null>(null);
@@ -59,7 +60,7 @@ export function App() {
   const isProductManager = auth?.user.positions.includes("PRODUCT_MANAGER") || false;
   const canPublish = auth?.user.positions.some((item) => item === "PRODUCT_MANAGER" || item === "TEST") || false;
   const canTest = canPublish;
-  const availablePeople = admin?.people || (auth?.person ? [auth.person] : []);
+  const availablePeople = admin?.people?.length ? admin.people : peopleDirectory.length ? peopleDirectory : auth?.person ? [auth.person] : [];
   const availablePositions = admin?.positions || (auth?.user.positions.map((code) => ({ code, name: label(code), isActive: true })) ?? []);
 
   function openDrawer(kind: DrawerKind, context: DrawerContext = {}) {
@@ -115,13 +116,14 @@ export function App() {
   async function refreshData(target: RefreshTarget = "all") {
     const currentProjectId = selectedProjectId;
     if (target === "all") {
-      const [wb, ps, reqs, ts, bugs, vers] = await Promise.all([
+      const [wb, ps, reqs, ts, bugs, vers, people] = await Promise.all([
         api<any>("/workbench"),
         api<Project[]>("/projects"),
         api<Requirement[]>("/requirements"),
         api<DevTask[]>("/tasks"),
         api<Defect[]>("/defects"),
-        api<ReleaseVersion[]>("/versions")
+        api<ReleaseVersion[]>("/versions"),
+        api<Person[]>("/admin/people")
       ]);
       setWorkbench(wb);
       setProjects(ps);
@@ -129,6 +131,7 @@ export function App() {
       setTasks(ts);
       setDefects(bugs);
       setVersions(vers);
+      setPeopleDirectory(people);
       const nextProjectId = currentProjectId || ps[0]?.id || null;
       if (!currentProjectId && nextProjectId) setSelectedProjectId(nextProjectId);
       await Promise.all([refreshAdminData(), refreshSelectedProjectDetail(nextProjectId)]);
@@ -1367,7 +1370,7 @@ function TaskTable({
             <th>负责人</th>
             <th>状态</th>
             <th>排期</th>
-            <th>分数</th>
+            <th>优先级分数</th>
             <th></th>
           </tr>
         </thead>
@@ -1448,7 +1451,7 @@ function DefectTable({
             <th>负责人</th>
             <th>状态</th>
             <th>环境</th>
-            <th>分数</th>
+            <th>优先级分数</th>
             <th></th>
           </tr>
         </thead>
@@ -1525,7 +1528,7 @@ function RequirementTable({
             <th>性质</th>
             <th>需求状态</th>
             <th>上线状态</th>
-            <th>分数</th>
+            <th>优先级分数</th>
             <th>任务</th>
             <th></th>
           </tr>
@@ -1666,6 +1669,90 @@ function ReviewDialog({
   );
 }
 
+function TaskPriorityPanel({
+  requirement,
+  assigneeName,
+  assigneeTasks,
+  assigneeDefects
+}: {
+  requirement?: Requirement | null;
+  assigneeName?: string;
+  assigneeTasks: DevTask[];
+  assigneeDefects: Defect[];
+}) {
+  return (
+    <section className="priority-panel">
+      <div className="priority-overview">
+        <span>需求优先级分数</span>
+        <strong>{requirement?.priorityScore ?? "-"}</strong>
+        <em>{requirement ? `${requirement.title}（${requirement.code}）` : "请选择关联需求"}</em>
+      </div>
+      <div className="priority-workload">
+        <div className="section-title compact-title">
+          <h3>{assigneeName || "未选择负责人"}</h3>
+          <span className="section-note">现有开发任务和缺陷修复的优先级分数</span>
+        </div>
+        <div className="priority-columns">
+          <PriorityItems
+            title="开发任务"
+            emptyText="暂无开发任务"
+            items={assigneeTasks.map((task) => ({
+              id: task.id,
+              title: task.title,
+              meta: `${task.project?.name || "-"} / ${task.requirement?.title || "-"}`,
+              status: task.status,
+              priorityScore: task.priorityScore
+            }))}
+          />
+          <PriorityItems
+            title="缺陷修复"
+            emptyText="暂无缺陷修复"
+            items={assigneeDefects.map((defect) => ({
+              id: defect.id,
+              title: defect.title,
+              meta: `${defect.project?.name || "-"} / ${defect.task?.title || "-"}`,
+              status: defect.status,
+              priorityScore: defect.priorityScore
+            }))}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PriorityItems({
+  title,
+  emptyText,
+  items
+}: {
+  title: string;
+  emptyText: string;
+  items: Array<{ id: number; title: string; meta: string; status: string; priorityScore: number }>;
+}) {
+  return (
+    <div className="priority-list">
+      <h4>{title}</h4>
+      {items.length ? (
+        <div className="priority-items">
+          {items.map((item) => (
+            <div key={item.id} className="priority-item">
+              <div>
+                <strong>{item.title}</strong>
+                <span>{item.meta}</span>
+                <Badge value={label(item.status)} />
+              </div>
+              <em>{item.priorityScore}</em>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p>{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
 function CreateDrawer({
   kind,
   context,
@@ -1699,6 +1786,8 @@ function CreateDrawer({
   defectPriorities: AdminData["defectPriorities"];
   onSubmit: (kind: Exclude<DrawerKind, null>, body: any) => Promise<boolean>;
 }) {
+  const currentPositionCode = currentUser.primaryPosition || currentUser.positions[0] || "";
+  const currentPersonId = currentPerson?.id || currentUser.personId;
   const activeKind = kind;
   const draftScope = context.editProjectId
     ? `project-edit:${context.editProjectId}`
@@ -1715,6 +1804,7 @@ function CreateDrawer({
   const [draftMessage, setDraftMessage] = useState("");
   const [draftStamp, setDraftStamp] = useState(0);
   const [versionProjectId, setVersionProjectId] = useState("");
+  const [taskAssigneeId, setTaskAssigneeId] = useState(String(currentPersonId || ""));
   const openProjectFallbackId = projects.find((project) => project.stage !== "CLOSED")?.id || "";
   useEffect(() => {
     setDraftMessage("");
@@ -1724,6 +1814,11 @@ function CreateDrawer({
       setVersionProjectId(String(draftValue(draft, "projectId", openProjectFallbackId) || ""));
     }
   }, [kind, draftKey, openProjectFallbackId]);
+  useEffect(() => {
+    if (kind === "task") {
+      setTaskAssigneeId(String(draftValue(draft, "assigneeId", currentPersonId) || ""));
+    }
+  }, [kind, draftKey, currentPersonId]);
   if (!activeKind) return null;
   const activeDrawerKind = activeKind;
   const selectedProject = context.projectId ? projects.find((project) => project.id === context.projectId) : null;
@@ -1747,8 +1842,6 @@ function CreateDrawer({
     const projectId = item.project?.id || item.task?.project?.id || item.task?.requirement?.projectId;
     return Boolean(projectId && projectId === selectedVersionProjectId && openProjectIds.has(projectId) && ["VERIFIED", "CLOSED"].includes(item.status));
   });
-  const currentPositionCode = currentUser.primaryPosition || currentUser.positions[0] || "";
-  const currentPersonId = currentPerson?.id || currentUser.personId;
   const productManagers = people.filter(isProductManagerPerson);
   const defaultProjectOwnerId = editingProject?.ownerId || editingProject?.owner?.id || (isProductManagerPerson(currentPerson) ? currentPersonId : productManagers[0]?.id);
   const requirementTypeOptions = dictionaryOptions(dictionaries, "REQUIREMENT_TYPE", [["FEATURE", "功能需求"], ["PROCESS", "流程需求"], ["DATA", "数据需求"], ["REPORT", "报表需求"], ["UX", "体验优化"]]);
@@ -1756,6 +1849,14 @@ function CreateDrawer({
   const taskTypeOptions = positions.length ? positions.filter((item) => item.isActive !== false).map((item) => [item.code, item.name] as [string, string]) : dictionaryOptions(dictionaries, "TASK_TYPE", [["UI", "UI设计"], ["FRONTEND", "前端开发"], ["BACKEND", "后端开发"], ["DATA", "数据开发"], ["TEST", "测试验证"]]);
   const versionTypeOptions = dictionaryOptions(dictionaries, "VERSION_TYPE", [["NORMAL", "常规版本"], ["HOTFIX", "紧急修复"], ["GRAY", "灰度版本"]]);
   const documentTypeOptions = dictionaryOptions(dictionaries, "DOCUMENT_TYPE", [["BUSINESS", "业务资料"], ["TECH", "技术资料"], ["TEST", "测试资料"], ["RELEASE", "上线资料"]]);
+  const taskAssigneeNumberId = Number(taskAssigneeId);
+  const selectedTaskAssignee = people.find((person) => person.id === taskAssigneeNumberId);
+  const assigneeTasks = tasks
+    .filter((task) => task.assignee?.id === taskAssigneeNumberId)
+    .sort((left, right) => (right.priorityScore || 0) - (left.priorityScore || 0));
+  const assigneeDefects = defects
+    .filter((defect) => defect.assignee?.id === taskAssigneeNumberId)
+    .sort((left, right) => (right.priorityScore || 0) - (left.priorityScore || 0));
   const titles: Record<Exclude<DrawerKind, null>, string> = {
     project: "新建项目",
     requirement: "新建需求",
@@ -1795,6 +1896,7 @@ function CreateDrawer({
 
   function discardDraft() {
     clearFormDraft(draftKey);
+    if (activeDrawerKind === "task") setTaskAssigneeId(String(currentPersonId || ""));
     setDraftMessage("草稿已清除。");
     setDraftStamp((value) => value + 1);
   }
@@ -1853,9 +1955,10 @@ function CreateDrawer({
               )}
               <Field name="title" label="任务标题" required defaultValue={draftValue(draft, "title")} />
               <Select name="type" label="任务类型（按岗位带出）" options={taskTypeOptions} defaultValue={draftValue(draft, "type", currentPositionCode)} />
-              <PeopleSelect name="assigneeId" label="负责人" people={people} defaultValue={draftValue(draft, "assigneeId", currentPersonId)} />
-              <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate")} />
+              <Select name="assigneeId" label="负责人" options={people.map((person) => [String(person.id), person.name])} value={taskAssigneeId} onChange={setTaskAssigneeId} />
+              <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate", todayDateInput())} />
               <Field name="plannedFinishDate" label="计划完成时间" type="date" defaultValue={draftValue(draft, "plannedFinishDate")} />
+              <TaskPriorityPanel requirement={selectedRequirement} assigneeName={selectedTaskAssignee?.name} assigneeTasks={assigneeTasks} assigneeDefects={assigneeDefects} />
             </>
           ) : null}
           {activeDrawerKind === "defect" ? (
