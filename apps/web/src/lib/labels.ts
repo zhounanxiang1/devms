@@ -32,7 +32,21 @@ export const statusLabels: Record<string, string> = {
   ACTIVE: "启用",
   DISABLED: "停用",
   LOCKED: "锁定",
-  LEFT: "离职"
+  LEFT: "离职",
+  PASS: "通过",
+  REJECT: "不通过",
+  SUPPLEMENT: "待补充",
+  DEFER: "暂缓",
+  CANCEL: "取消"
+};
+
+export const requirementTypeLabels: Record<string, string> = {
+  FEATURE: "功能需求",
+  PROCESS: "流程需求",
+  DATA: "数据需求",
+  REPORT: "报表需求",
+  UX: "体验优化",
+  NON_FUNCTIONAL: "非功能需求"
 };
 
 export const positionLabels: Record<string, string> = {
@@ -48,9 +62,7 @@ export const positionLabels: Record<string, string> = {
 
 export const projectStageLabels: Record<string, string> = {
   INITIATED: "已立项",
-  RESEARCHING: "需求调研",
-  SOLUTION_DESIGN: "方案设计",
-  DEV_TEST: "系统开发与测试",
+  IN_PROGRESS: "进行中",
   ONLINE_OPS: "上线运维",
   CLOSED: "已结项"
 };
@@ -58,7 +70,7 @@ export const projectStageLabels: Record<string, string> = {
 export const dictionaryTypeMeta: Record<string, { name: string; usage: string }> = {
   PROJECT_STAGE: {
     name: "项目阶段",
-    usage: "用于项目中心的阶段展示和编辑；新建项目默认已立项，不在新建表单中手动选择，项目创建后可在编辑项目时维护。"
+    usage: "用于项目中心展示项目整体状态；新建项目默认已立项，启动后进入进行中，首次发布后进入上线运维，结项和重新打开通过专门操作完成。"
   },
   REQUIREMENT_STATUS: {
     name: "需求状态",

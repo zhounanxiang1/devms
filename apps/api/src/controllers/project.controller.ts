@@ -34,6 +34,11 @@ export class ProjectController {
     return this.core.closeProject(req.user, toInt(id)!, body);
   }
 
+  @Post(":id/start")
+  start(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
+    return this.core.startProject(req.user, toInt(id)!, body);
+  }
+
   @Post(":id/reopen")
   reopen(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
     return this.core.reopenProject(req.user, toInt(id)!, body);

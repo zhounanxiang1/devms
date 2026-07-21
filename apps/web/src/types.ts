@@ -69,6 +69,18 @@ export type Project = {
   _count?: Record<string, number>;
 };
 
+export type ProjectDocument = {
+  id: number;
+  name: string;
+  type: string;
+  description?: string | null;
+  linkUrl?: string | null;
+  attachmentUrl?: string | null;
+  version?: string | null;
+  project?: Project;
+  createdBy?: Person;
+};
+
 export type Requirement = {
   id: number;
   code: string;
@@ -81,12 +93,17 @@ export type Requirement = {
   revisionType?: string;
   priorityLevel: string;
   priorityScore: number;
+  timingBonus?: number;
+  timingBonusReason?: string | null;
   owner?: Person;
+  submitter?: Person;
   expectedLaunchDate?: string;
   description?: string;
+  acceptanceCriteria?: string;
   reviewDate?: string;
   reviewConclusion?: string;
   reviewRecord?: string;
+  documents?: { document: ProjectDocument }[];
 };
 
 export type DevTask = {
@@ -112,6 +129,20 @@ export type Defect = {
   status: string;
   environment: string;
   priorityScore: number;
+  foundAt?: string;
+  entryPoint?: string | null;
+  impactScope?: string | null;
+  precondition?: string | null;
+  description?: string | null;
+  reproduceSteps?: string | null;
+  actualResult?: string | null;
+  expectedResult?: string | null;
+  deviceInfo?: string | null;
+  testData?: string | null;
+  attachmentUrl?: string | null;
+  actualFixDate?: string | null;
+  timingBonus?: number;
+  timingBonusReason?: string | null;
   plannedStartDate?: string;
   plannedFinishDate?: string;
   plannedFixDate?: string;
@@ -120,6 +151,8 @@ export type Defect = {
   task?: DevTask;
   requirement?: Requirement;
   assignee?: Person;
+  reporter?: Person;
+  version?: ReleaseVersion;
 };
 
 export type ReleaseVersion = {

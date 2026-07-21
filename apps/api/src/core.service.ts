@@ -24,15 +24,6 @@ const includePerson = {
 
 const DEFAULT_INITIAL_PASSWORD = "123";
 
-const PROJECT_STAGE_RANK: Record<ProjectStage, number> = {
-  [ProjectStage.INITIATED]: 1,
-  [ProjectStage.RESEARCHING]: 2,
-  [ProjectStage.SOLUTION_DESIGN]: 3,
-  [ProjectStage.DEV_TEST]: 4,
-  [ProjectStage.ONLINE_OPS]: 5,
-  [ProjectStage.CLOSED]: 6
-};
-
 const REQUIREMENT_REVISION_BONUS: Record<RequirementRevisionType, Record<RequirementLaunchStatus, number>> = {
   [RequirementRevisionType.CHANGE]: {
     [RequirementLaunchStatus.TO_RELEASE]: 6,
@@ -40,9 +31,13 @@ const REQUIREMENT_REVISION_BONUS: Record<RequirementRevisionType, Record<Require
   },
   [RequirementRevisionType.OPTIMIZATION]: {
     [RequirementLaunchStatus.TO_RELEASE]: 3,
-    [RequirementLaunchStatus.RELEASED]: 8
+    [RequirementLaunchStatus.RELEASED]: 6
   }
 };
+
+function normalizeDefectEnvironment(value?: unknown) {
+  return String(value || "OFFLINE").toUpperCase() === "ONLINE" ? "ONLINE" : "OFFLINE";
+}
 
 function startOfToday() {
   const now = new Date();
@@ -113,7 +108,7 @@ export class CoreService {
             { status: DefectStatus.FIXED, ...(this.canVerify(user) ? {} : { assigneeId: user.personId }) }
           ]
         },
-        include: { project: true, task: { include: { requirement: true } }, assignee: true },
+        include: { project: true, task: { include: { requirement: true } }, assignee: true, reporter: true, version: true },
         orderBy: [{ priorityScore: "desc" }, { plannedFinishDate: "asc" }, { plannedFixDate: "asc" }]
       }),
       this.prisma.project.findMany({
@@ -184,10 +179,10 @@ export class CoreService {
     return project;
   }
 
-  private async advanceProjectStage(user: AuthUser, projectId: number, targetStage: ProjectStage, summary: string) {
+  private async setProjectStage(user: AuthUser, projectId: number, targetStage: ProjectStage, summary: string) {
     const project = await this.prisma.project.findUnique({ where: { id: projectId } });
     if (!project || project.stage === ProjectStage.CLOSED) return;
-    if (PROJECT_STAGE_RANK[project.stage] >= PROJECT_STAGE_RANK[targetStage]) return;
+    if (project.stage === targetStage) return;
     const updated = await this.prisma.project.update({
       where: { id: projectId },
       data: { stage: targetStage }
@@ -197,7 +192,7 @@ export class CoreService {
       entityType: "PROJECT",
       entityId: projectId,
       projectId,
-      action: "STAGE_AUTO_ADVANCE",
+      action: "STAGE_CHANGE",
       summary,
       beforeJson: project,
       afterJson: updated
@@ -206,6 +201,37 @@ export class CoreService {
 
   private toNumberIds(values: unknown) {
     return Array.isArray(values) ? values.map(Number).filter(Number.isFinite) : [];
+  }
+
+  private async createLinkedRequirementDocument(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    requirement: { id: number; projectId: number; title: string },
+    body: any
+  ) {
+    const hasDocument =
+      Boolean(String(body.documentName || "").trim()) ||
+      Boolean(String(body.documentDescription || "").trim()) ||
+      Boolean(String(body.documentAttachmentUrl || "").trim()) ||
+      Boolean(String(body.documentAttachmentFileName || "").trim());
+    if (!hasDocument) return null;
+    const document = await tx.projectDocument.create({
+      data: {
+        projectId: requirement.projectId,
+        name: String(body.documentName || body.documentAttachmentFileName || `${requirement.title}资料`).trim(),
+        type: body.documentType || "BUSINESS",
+        description: body.documentDescription,
+        attachmentUrl: body.documentAttachmentUrl,
+        createdById: user.personId
+      }
+    });
+    await tx.requirementDocument.create({
+      data: {
+        requirementId: requirement.id,
+        documentId: document.id
+      }
+    });
+    return document;
   }
 
   private async assertVersionScope(projectId: number, requirementIds: number[], defectIds: number[]) {
@@ -310,10 +336,18 @@ export class CoreService {
       include: {
         owner: true,
         members: { include: { person: { include: includePerson } } },
-        documents: true,
-        requirements: { include: { _count: { select: { tasks: true, changes: true } } }, orderBy: { updatedAt: "desc" } },
+        documents: { include: { requirements: { include: { requirement: true } } } },
+        requirements: {
+          include: {
+            project: true,
+            submitter: true,
+            documents: { include: { document: true } },
+            _count: { select: { tasks: true, changes: true, documents: true } }
+          },
+          orderBy: { updatedAt: "desc" }
+        },
         tasks: { include: { assignee: true, requirement: true, defects: true }, orderBy: { updatedAt: "desc" } },
-        defects: { include: { assignee: true, task: { include: { requirement: true } } }, orderBy: { updatedAt: "desc" } },
+        defects: { include: { assignee: true, reporter: true, version: true, task: { include: { requirement: true } } }, orderBy: { updatedAt: "desc" } },
         versions: { orderBy: { updatedAt: "desc" } },
         logs: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 30 }
       }
@@ -327,7 +361,7 @@ export class CoreService {
     if (!before) throw new NotFoundException("项目不存在");
     this.requireProjectManager(user, before);
     if (body.stage && body.stage !== before.stage) {
-      throw new BadRequestException("项目阶段由系统按关键事件自动流转，结项或重新打开请使用专门操作");
+      throw new BadRequestException("项目阶段由启动、发布、结项和重新打开等专门操作维护，不能在普通编辑中修改");
     }
     const ownerId = body.ownerId === undefined ? undefined : await this.ensureProductManagerOwner(toInt(body.ownerId));
     const project = await this.prisma.project.update({
@@ -383,14 +417,40 @@ export class CoreService {
     return project;
   }
 
+  async startProject(user: AuthUser, id: number, body: any) {
+    const before = await this.prisma.project.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException("项目不存在");
+    this.requireProjectManager(user, before);
+    if (before.stage === ProjectStage.CLOSED) {
+      throw new BadRequestException("项目已结项，请先重新打开");
+    }
+    if (before.stage !== ProjectStage.INITIATED) return before;
+    const project = await this.prisma.project.update({
+      where: { id },
+      data: { stage: ProjectStage.IN_PROGRESS }
+    });
+    await this.log({
+      user,
+      entityType: "PROJECT",
+      entityId: id,
+      projectId: id,
+      action: "START",
+      summary: body.reason ? `启动项目：${body.reason}` : `启动项目：${project.name}`,
+      beforeJson: before,
+      afterJson: project
+    });
+    return project;
+  }
+
   async reopenProject(user: AuthUser, id: number, body: any) {
     const before = await this.prisma.project.findUnique({ where: { id } });
     if (!before) throw new NotFoundException("项目不存在");
     this.requireProjectManager(user, before);
     if (before.stage !== ProjectStage.CLOSED) return before;
+    const targetStage = body.stage === ProjectStage.IN_PROGRESS ? ProjectStage.IN_PROGRESS : ProjectStage.ONLINE_OPS;
     const project = await this.prisma.project.update({
       where: { id },
-      data: { stage: ProjectStage.ONLINE_OPS }
+      data: { stage: targetStage }
     });
     await this.log({
       user,
@@ -408,7 +468,7 @@ export class CoreService {
   async listRequirements(projectId?: number) {
     return this.prisma.requirement.findMany({
       where: projectId ? { projectId } : {},
-      include: { project: true, owner: true, submitter: true, _count: { select: { tasks: true, changes: true } } },
+      include: { project: true, owner: true, submitter: true, documents: { include: { document: true } }, _count: { select: { tasks: true, changes: true, documents: true } } },
       orderBy: [{ priorityScore: "desc" }, { updatedAt: "desc" }]
     });
   }
@@ -416,25 +476,28 @@ export class CoreService {
   async createRequirement(user: AuthUser, body: any) {
     await this.assertProjectOpen(Number(body.projectId), "新增需求");
     const priorityScore = await this.calculateRequirementScore(body.priorityLevel || "P2", body.timingBonus);
-    const requirement = await this.prisma.requirement.create({
-      data: {
-        code: body.code || code("REQ"),
-        title: body.title,
-        projectId: Number(body.projectId),
-        type: body.type || "FEATURE",
-        priorityLevel: body.priorityLevel || "P2",
-        source: body.source,
-        description: body.description || "",
-        acceptanceCriteria: body.acceptanceCriteria || "",
-        expectedLaunchDate: toDate(body.expectedLaunchDate),
-        timingBonus: Number(body.timingBonus || 0),
-        timingBonusReason: body.timingBonusReason,
-        priorityScore,
-        ownerId: toInt(body.ownerId),
-        submitterId: user.personId
-      }
+    const requirement = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.requirement.create({
+        data: {
+          code: body.code || code("REQ"),
+          title: body.title,
+          projectId: Number(body.projectId),
+          type: body.type || "FEATURE",
+          priorityLevel: body.priorityLevel || "P2",
+          source: body.source,
+          description: body.description || "",
+          acceptanceCriteria: body.acceptanceCriteria || "",
+          expectedLaunchDate: toDate(body.expectedLaunchDate),
+          timingBonus: Number(body.timingBonus || 0),
+          timingBonusReason: body.timingBonusReason,
+          priorityScore,
+          ownerId: toInt(body.ownerId),
+          submitterId: user.personId
+        }
+      });
+      await this.createLinkedRequirementDocument(tx, user, created, body);
+      return created;
     });
-    await this.advanceProjectStage(user, requirement.projectId, ProjectStage.RESEARCHING, "创建需求后，项目进入需求调研");
     await this.log({ user, entityType: "REQUIREMENT", entityId: requirement.id, projectId: requirement.projectId, requirementId: requirement.id, action: "CREATE", summary: `创建需求：${requirement.title}` });
     return requirement;
   }
@@ -494,9 +557,6 @@ export class CoreService {
         reviewDate: toDate(body.reviewDate) || new Date()
       }
     });
-    if (status === RequirementStatus.APPROVED) {
-      await this.advanceProjectStage(user, requirement.projectId, ProjectStage.SOLUTION_DESIGN, "需求评审通过后，项目进入方案设计");
-    }
     await this.log({ user, entityType: "REQUIREMENT", entityId: id, projectId: requirement.projectId, requirementId: id, action: "REVIEW", summary: `填写评审结论：${body.conclusion}`, beforeJson: before, afterJson: requirement });
     return requirement;
   }
@@ -563,7 +623,7 @@ export class CoreService {
           data: { status: DefectStatus.CLOSED }
         });
       }
-      return tx.requirement.create({
+      const created = await tx.requirement.create({
         data: {
           code: body.code || code("REQ"),
           title: body.title,
@@ -584,6 +644,8 @@ export class CoreService {
           optimizationSourceId: original.id
         }
       });
+      await this.createLinkedRequirementDocument(tx, user, created, body);
+      return created;
     });
 
     await this.log({
@@ -641,7 +703,6 @@ export class CoreService {
     if (requirement.status === RequirementStatus.APPROVED) {
       await this.prisma.requirement.update({ where: { id: requirement.id }, data: { status: RequirementStatus.DEVELOPING } });
     }
-    await this.advanceProjectStage(user, task.projectId, ProjectStage.DEV_TEST, "创建开发任务后，项目进入系统开发与测试");
     await this.log({ user, entityType: "TASK", entityId: task.id, projectId: task.projectId, requirementId: task.requirementId, taskId: task.id, action: "CREATE", summary: `创建开发任务：${task.title}` });
     return task;
   }
@@ -753,7 +814,7 @@ export class CoreService {
   async listDefects(projectId?: number) {
     return this.prisma.defect.findMany({
       where: projectId ? { projectId } : {},
-      include: { project: true, task: { include: { requirement: true } }, assignee: true, reporter: true },
+      include: { project: true, task: { include: { requirement: true } }, assignee: true, reporter: true, version: true },
       orderBy: [{ priorityScore: "desc" }, { plannedFinishDate: "asc" }, { plannedFixDate: "asc" }]
     });
   }
@@ -762,15 +823,16 @@ export class CoreService {
     const task = await this.prisma.devTask.findUnique({ where: { id: Number(body.taskId) }, include: { requirement: true } });
     if (!task) throw new NotFoundException("任务不存在");
     await this.assertProjectOpen(task.projectId, "新增缺陷");
+    if (task.status !== TaskStatus.TESTING && task.status !== TaskStatus.TEST_PASSED) {
+      throw new BadRequestException("只有测试中或测试通过的任务可以创建缺陷");
+    }
+    const environment = task.requirement?.launchStatus === RequirementLaunchStatus.RELEASED ? "ONLINE" : "OFFLINE";
     const priorityScore = await this.calculateDefectScore({
       level: body.level || "L3",
-      environment: body.environment || "TEST",
+      environment,
       taskId: task.id,
       timingBonus: Number(body.timingBonus || 0)
     });
-    const assigneeId = toInt(body.assigneeId);
-    const plannedStartDate = toDate(body.plannedStartDate);
-    const plannedFinishDate = toDate(body.plannedFinishDate) || toDate(body.plannedFixDate);
     const defect = await this.prisma.defect.create({
       data: {
         code: body.code || code("BUG"),
@@ -780,23 +842,40 @@ export class CoreService {
         versionId: toInt(body.versionId),
         level: body.level || "L3",
         status: DefectStatus.TO_FIX,
-        assigneeId,
+        assigneeId: task.assigneeId,
         reporterId: user.personId,
+        foundAt: toDate(body.foundAt) || new Date(),
+        entryPoint: body.entryPoint,
+        impactScope: body.impactScope,
+        precondition: body.precondition,
         description: body.description || "",
         reproduceSteps: body.reproduceSteps,
         actualResult: body.actualResult,
         expectedResult: body.expectedResult,
-        environment: body.environment || "TEST",
+        deviceInfo: body.deviceInfo,
+        testData: body.testData,
+        environment,
         attachmentUrl: body.attachmentUrl,
-        plannedStartDate,
-        plannedFinishDate,
-        plannedFixDate: plannedFinishDate,
         timingBonus: Number(body.timingBonus || 0),
         timingBonusReason: body.timingBonusReason,
         priorityScore
       }
     });
     await this.log({ user, entityType: "DEFECT", entityId: defect.id, projectId: defect.projectId, requirementId: task.requirementId, taskId: task.id, defectId: defect.id, action: "CREATE", summary: `创建缺陷：${defect.title}` });
+    if (task.status === TaskStatus.TEST_PASSED && environment !== "ONLINE") {
+      const updatedTask = await this.prisma.devTask.update({
+        where: { id: task.id },
+        data: { status: TaskStatus.TESTING }
+      });
+      await this.log({ user, entityType: "TASK", entityId: task.id, projectId: task.projectId, requirementId: task.requirementId, taskId: task.id, defectId: defect.id, action: "REOPEN_TEST", summary: `测试通过任务新增缺陷，任务退回测试中：${task.title}`, beforeJson: task, afterJson: updatedTask });
+      if (task.requirement?.status === RequirementStatus.COMPLETED) {
+        const requirement = await this.prisma.requirement.update({
+          where: { id: task.requirementId },
+          data: { status: RequirementStatus.DEVELOPING }
+        });
+        await this.log({ user, entityType: "REQUIREMENT", entityId: task.requirementId, projectId: task.projectId, requirementId: task.requirementId, taskId: task.id, defectId: defect.id, action: "REOPEN_DEVELOPMENT", summary: "测试通过任务新增缺陷，需求退回开发中", beforeJson: task.requirement, afterJson: requirement });
+      }
+    }
     return defect;
   }
 
@@ -807,9 +886,13 @@ export class CoreService {
     const taskId = body.taskId === undefined ? before.taskId : Number(body.taskId);
     const task = await this.prisma.devTask.findUnique({ where: { id: taskId }, include: { requirement: true } });
     if (!task) throw new NotFoundException("任务不存在");
+    const environment = body.environment === undefined ? undefined : normalizeDefectEnvironment(body.environment);
+    if (environment === "ONLINE" && task.requirement?.launchStatus !== RequirementLaunchStatus.RELEASED) {
+      throw new BadRequestException("只有已上线需求才能登记线上缺陷");
+    }
     const priorityScore = await this.calculateDefectScore({
       level: body.level ?? before.level,
-      environment: body.environment ?? before.environment,
+      environment: environment ?? before.environment,
       taskId,
       timingBonus: body.timingBonus ?? before.timingBonus
     });
@@ -823,11 +906,17 @@ export class CoreService {
         level: body.level,
         status: body.status,
         assigneeId,
+        foundAt: toDate(body.foundAt),
+        entryPoint: body.entryPoint,
+        impactScope: body.impactScope,
+        precondition: body.precondition,
         description: body.description,
         reproduceSteps: body.reproduceSteps,
         actualResult: body.actualResult,
         expectedResult: body.expectedResult,
-        environment: body.environment,
+        deviceInfo: body.deviceInfo,
+        testData: body.testData,
+        environment,
         attachmentUrl: body.attachmentUrl,
         plannedStartDate: toDate(body.plannedStartDate),
         plannedFinishDate: toDate(body.plannedFinishDate) || toDate(body.plannedFixDate),
@@ -854,6 +943,9 @@ export class CoreService {
   }
 
   async completeDefectFix(user: AuthUser, id: number, body: any) {
+    const before = await this.prisma.defect.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException("缺陷不存在");
+    if (before.status !== DefectStatus.FIXING) throw new BadRequestException("只有修复中的缺陷可以标记已修复");
     const defect = await this.prisma.defect.update({
       where: { id },
       data: {
@@ -867,6 +959,9 @@ export class CoreService {
   }
 
   async verifyDefect(user: AuthUser, id: number, body: any) {
+    const before = await this.prisma.defect.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException("缺陷不存在");
+    if (before.status !== DefectStatus.FIXED) throw new BadRequestException("只有已修复的缺陷可以验证");
     requireAnyPosition(user, [PRODUCT_MANAGER, TEST], "只有产品经理或测试可以验证缺陷");
     const defect = await this.prisma.defect.update({
       where: { id },
@@ -877,6 +972,9 @@ export class CoreService {
   }
 
   async rejectDefect(user: AuthUser, id: number, body: any) {
+    const before = await this.prisma.defect.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException("缺陷不存在");
+    if (before.status !== DefectStatus.FIXED) throw new BadRequestException("只有已修复的缺陷可以验证未通过");
     requireAnyPosition(user, [PRODUCT_MANAGER, TEST], "只有产品经理或测试可以验证缺陷");
     const defect = await this.prisma.defect.update({
       where: { id },
@@ -887,6 +985,9 @@ export class CoreService {
   }
 
   async closeDefect(user: AuthUser, id: number, body: any) {
+    const before = await this.prisma.defect.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException("缺陷不存在");
+    if (before.status !== DefectStatus.TO_FIX) throw new BadRequestException("只有待修复的缺陷可以关闭");
     requireAnyPosition(user, [PRODUCT_MANAGER, TEST], "只有产品经理或测试可以关闭缺陷");
     const defect = await this.prisma.defect.update({
       where: { id },
@@ -897,6 +998,9 @@ export class CoreService {
   }
 
   async reopenDefect(user: AuthUser, id: number, body: any) {
+    const before = await this.prisma.defect.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException("缺陷不存在");
+    if (before.status !== DefectStatus.CLOSED) throw new BadRequestException("只有已关闭的缺陷可以开启");
     requireAnyPosition(user, [PRODUCT_MANAGER, TEST], "只有产品经理或测试可以重新打开缺陷");
     const defect = await this.prisma.defect.update({
       where: { id },
@@ -1036,7 +1140,7 @@ export class CoreService {
       });
       return tx.releaseVersion.findUniqueOrThrow({ where: { id } });
     });
-    await this.advanceProjectStage(user, version.projectId, ProjectStage.ONLINE_OPS, "版本发布成功后，项目进入上线运维");
+    await this.setProjectStage(user, version.projectId, ProjectStage.ONLINE_OPS, "版本发布成功后，项目进入上线运维");
     await this.log({ user, entityType: "VERSION", entityId: id, projectId: version.projectId, versionId: id, action: "PUBLISH", summary: `发布版本：${version.name}`, afterJson: snapshot });
     return published;
   }
@@ -1044,12 +1148,13 @@ export class CoreService {
   async listDocuments(projectId?: number) {
     return this.prisma.projectDocument.findMany({
       where: projectId ? { projectId } : {},
-      include: { project: true, createdBy: true },
+      include: { project: true, createdBy: true, requirements: { include: { requirement: true } } },
       orderBy: { updatedAt: "desc" }
     });
   }
 
   async createDocument(user: AuthUser, body: any) {
+    const requirementIds = this.toNumberIds(body.requirementIds);
     const document = await this.prisma.projectDocument.create({
       data: {
         projectId: Number(body.projectId),
@@ -1060,7 +1165,12 @@ export class CoreService {
         version: body.version,
         description: body.description,
         tags: body.tags,
-        createdById: user.personId
+        createdById: user.personId,
+        requirements: requirementIds.length
+          ? {
+              create: requirementIds.map((requirementId) => ({ requirementId }))
+            }
+          : undefined
       }
     });
     await this.log({ user, entityType: "DOCUMENT", entityId: document.id, projectId: document.projectId, action: "CREATE", summary: `新增资料：${document.name}` });

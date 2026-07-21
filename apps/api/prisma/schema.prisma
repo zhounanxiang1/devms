@@ -21,9 +21,7 @@ enum EmploymentStatus {
 
 enum ProjectStage {
   INITIATED
-  RESEARCHING
-  SOLUTION_DESIGN
-  DEV_TEST
+  IN_PROGRESS
   ONLINE_OPS
   CLOSED
 }
@@ -376,10 +374,16 @@ model Defect {
   status            DefectStatus @default(TO_FIX)
   assigneeId        Int?
   reporterId        Int?
+  foundAt           DateTime?
+  entryPoint        String?
+  impactScope       String?      @db.Text
+  precondition      String?      @db.Text
   description       String       @db.Text
   reproduceSteps    String?      @db.Text
   actualResult      String?      @db.Text
   expectedResult    String?      @db.Text
+  deviceInfo        String?      @db.Text
+  testData          String?      @db.Text
   environment       String       @default("TEST")
   attachmentUrl     String?      @db.Text
   plannedStartDate  DateTime?

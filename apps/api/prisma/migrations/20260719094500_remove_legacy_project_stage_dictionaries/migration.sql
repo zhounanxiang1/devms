@@ -1,0 +1,3 @@
+DELETE FROM `Dictionary`
+WHERE `type` = 'PROJECT_STAGE'
+  AND `code` IN ('RESEARCHING', 'SOLUTION_DESIGN', 'DEV_TEST');

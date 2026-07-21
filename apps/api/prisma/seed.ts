@@ -5,11 +5,9 @@ const prisma = new PrismaClient();
 
 const dictionaries = [
   ["PROJECT_STAGE", "INITIATED", "已立项", 1],
-  ["PROJECT_STAGE", "RESEARCHING", "需求调研", 2],
-  ["PROJECT_STAGE", "SOLUTION_DESIGN", "方案设计", 3],
-  ["PROJECT_STAGE", "DEV_TEST", "系统开发与测试", 4],
-  ["PROJECT_STAGE", "ONLINE_OPS", "上线运维", 5],
-  ["PROJECT_STAGE", "CLOSED", "已结项", 6],
+  ["PROJECT_STAGE", "IN_PROGRESS", "进行中", 2],
+  ["PROJECT_STAGE", "ONLINE_OPS", "上线运维", 3],
+  ["PROJECT_STAGE", "CLOSED", "已结项", 4],
   ["REQUIREMENT_STATUS", "TO_REVIEW", "待评审", 1],
   ["REQUIREMENT_STATUS", "APPROVED", "评审通过", 2],
   ["REQUIREMENT_STATUS", "REJECTED", "评审不通过", 3],
@@ -43,6 +41,7 @@ const dictionaries = [
   ["REQUIREMENT_TYPE", "DATA", "数据需求", 3],
   ["REQUIREMENT_TYPE", "REPORT", "报表需求", 4],
   ["REQUIREMENT_TYPE", "UX", "体验优化", 5],
+  ["REQUIREMENT_TYPE", "NON_FUNCTIONAL", "非功能需求", 6],
   ["TASK_TYPE", "UI", "UI设计", 1],
   ["TASK_TYPE", "FRONTEND", "前端开发", 2],
   ["TASK_TYPE", "BACKEND", "后端开发", 3],
@@ -63,10 +62,10 @@ const requirementPriorities = [
 ] as const;
 
 const defectPriorities = [
-  ["L1", "1级 致命", "系统崩溃、核心流程完全不可用、资损、高危安全漏洞、大面积用户故障", 60, 40, 1],
-  ["L2", "2级 严重", "核心流程局部报错、高频操作异常、少量资损、关键数据错乱", 45, 30, 2],
-  ["L3", "3级 一般", "功能可正常使用，次要流程偶发异常，无直接业务损失", 25, 15, 3],
-  ["L4", "4级 轻微", "UI样式、文案、图标、交互细节瑕疵，无任何业务影响", 10, 5, 4]
+  ["L1", "阻塞", "核心流程无法继续、系统不可用、资损或高危安全问题", 60, 40, 1],
+  ["L2", "严重", "核心流程局部异常、高频操作失败、关键数据错误", 45, 30, 2],
+  ["L3", "一般", "功能可继续使用，但存在普通流程异常或体验问题", 25, 15, 3],
+  ["L4", "次要", "轻微样式、文案、提示、兼容性或低影响问题", 10, 5, 4]
 ] as const;
 
 async function main() {
@@ -99,6 +98,7 @@ async function main() {
     where: {
       OR: [
         { type: "REQUIREMENT_STATUS", code: { in: ["TESTING", "READY_TO_RELEASE", "RELEASED"] } },
+        { type: "PROJECT_STAGE", code: { in: ["RESEARCHING", "SOLUTION_DESIGN", "DEV_TEST"] } },
         { type: "TASK_STATUS", code: { in: ["DONE", "BLOCKED", "CANCELED"] } },
         { type: "DEFECT_STATUS", code: { in: ["TO_ASSIGN", "DOING", "TO_VERIFY", "REOPENED", "REJECTED", "DEFERRED"] } }
       ]

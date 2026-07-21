@@ -20,7 +20,7 @@ export function ScheduleDialog({
   if (!state) return null;
   const activeState = state;
   const isTask = activeState.type === "task";
-  const title = isTask ? "调整任务排期" : "调整缺陷修复排期";
+  const title = isTask ? "调整任务排期" : "编辑缺陷修复";
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

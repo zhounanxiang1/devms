@@ -1,3 +1,4 @@
+import { useRef, useState, type ChangeEvent } from "react";
 import { Person, Project } from "../types";
 
 export function ProjectSelect({ projects, defaultValue }: { projects: Project[]; defaultValue?: string | number | null }) {
@@ -39,6 +40,9 @@ export function Field({
   disabled?: boolean;
   onChange?: (value: string) => void;
 }) {
+  if (type === "date") {
+    return <DateField name={name} label={text} required={required} defaultValue={defaultValue} value={value} disabled={disabled} onChange={onChange} />;
+  }
   const inputProps = value === undefined ? { defaultValue: defaultValue ?? "" } : { value: value ?? "" };
   return (
     <label className={required ? "field required" : "field"}>
@@ -48,11 +52,101 @@ export function Field({
   );
 }
 
+function isDateValue(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function DateField({
+  name,
+  label: text,
+  required,
+  defaultValue,
+  value,
+  disabled,
+  onChange
+}: {
+  name: string;
+  label: string;
+  required?: boolean;
+  defaultValue?: string | number | null;
+  value?: string | number | null;
+  disabled?: boolean;
+  onChange?: (value: string) => void;
+}) {
+  const pickerRef = useRef<HTMLInputElement | null>(null);
+  const controlled = value !== undefined;
+  const [innerValue, setInnerValue] = useState(String(defaultValue ?? ""));
+  const currentValue = String((controlled ? value : innerValue) ?? "");
+
+  function commit(nextValue: string) {
+    if (!controlled) setInnerValue(nextValue);
+    onChange?.(nextValue);
+  }
+
+  function openPicker() {
+    if (disabled) return;
+    try {
+      pickerRef.current?.showPicker();
+    } catch {
+      pickerRef.current?.focus();
+    }
+  }
+
+  function handleTextChange(event: ChangeEvent<HTMLInputElement>) {
+    commit(event.currentTarget.value);
+  }
+
+  function handlePickerChange(event: ChangeEvent<HTMLInputElement>) {
+    commit(event.currentTarget.value);
+  }
+
+  return (
+    <label className={required ? "field required date-field" : "field date-field"}>
+      <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
+      <span className="date-field-control">
+        <input
+          name={name}
+          type="text"
+          inputMode="numeric"
+          placeholder="YYYY-MM-DD"
+          pattern="\d{4}-\d{2}-\d{2}"
+          title="请输入 YYYY-MM-DD 格式的日期"
+          required={required}
+          disabled={disabled}
+          value={currentValue}
+          onChange={handleTextChange}
+          onClick={openPicker}
+        />
+        <input
+          ref={pickerRef}
+          className="date-picker-proxy"
+          type="date"
+          tabIndex={-1}
+          aria-hidden="true"
+          disabled={disabled}
+          value={isDateValue(currentValue) ? currentValue : ""}
+          onChange={handlePickerChange}
+        />
+      </span>
+    </label>
+  );
+}
+
 export function Textarea({ name, label: text, required, defaultValue }: { name: string; label: string; required?: boolean; defaultValue?: string | number | null }) {
   return (
     <label className={required ? "field required" : "field"}>
       <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
       <textarea name={name} required={required} defaultValue={defaultValue ?? ""} />
+    </label>
+  );
+}
+
+export function FileField({ name, label: text, accept }: { name: string; label: string; accept?: string }) {
+  return (
+    <label className="field file-field">
+      <span className="field-label">{text}</span>
+      <input name={name} type="file" accept={accept} />
+      <span className="file-field-note">选择本地文件后，提交时会作为附件保存。</span>
     </label>
   );
 }

@@ -1,5 +1,5 @@
 import { AdminData, Person } from "../types";
-import { dictionaryTypeMeta, positionLabels, projectStageLabels, statusLabels } from "./labels";
+import { dictionaryTypeMeta, positionLabels, projectStageLabels, requirementTypeLabels, statusLabels } from "./labels";
 
 export function fmtDate(value?: string) {
   if (!value) return "-";
@@ -8,7 +8,7 @@ export function fmtDate(value?: string) {
 
 export function label(code?: string) {
   if (!code) return "-";
-  return statusLabels[code] || positionLabels[code] || code;
+  return statusLabels[code] || positionLabels[code] || requirementTypeLabels[code] || code;
 }
 
 export function projectStageLabel(code?: string) {
@@ -52,9 +52,12 @@ export function dictionaryOptions(
   type: string,
   fallback: Array<[string, string]>
 ) {
+  const typeItems = dictionaries.filter((item) => item.type === type);
+  const existingCodes = new Set(typeItems.map((item) => item.code));
   const options = dictionaries
     .filter((item) => item.type === type && item.isActive)
     .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
     .map((item) => [item.code, item.name] as [string, string]);
-  return options.length ? options : fallback;
+  const missingFallback = fallback.filter(([code]) => !existingCodes.has(code));
+  return options.length ? [...options, ...missingFallback] : fallback;
 }

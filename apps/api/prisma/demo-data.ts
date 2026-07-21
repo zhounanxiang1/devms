@@ -50,7 +50,7 @@ const revisionBonus: Record<RequirementRevisionType, Record<RequirementLaunchSta
   },
   [RequirementRevisionType.OPTIMIZATION]: {
     [RequirementLaunchStatus.TO_RELEASE]: 3,
-    [RequirementLaunchStatus.RELEASED]: 8
+    [RequirementLaunchStatus.RELEASED]: 6
   }
 };
 
@@ -214,7 +214,7 @@ async function main() {
       code: "PROJ-DEMO-CRM",
       name: "客户运营中台二期",
       scope: "客户标签、活动审批、画像详情和触达效果闭环。",
-      stage: ProjectStage.DEV_TEST,
+      stage: ProjectStage.IN_PROGRESS,
       start: -18,
       end: 28,
       launch: 35,
@@ -226,7 +226,7 @@ async function main() {
       code: "PROJ-DEMO-APP",
       name: "移动端会员体验优化",
       scope: "会员权益、积分明细、个人中心和移动端性能体验。",
-      stage: ProjectStage.DEV_TEST,
+      stage: ProjectStage.IN_PROGRESS,
       start: -10,
       end: 24,
       launch: 30,
@@ -238,7 +238,7 @@ async function main() {
       code: "PROJ-DEMO-DATA",
       name: "经营分析看板升级",
       scope: "经营日报、销售漏斗、指标口径和门店维度分析。",
-      stage: ProjectStage.SOLUTION_DESIGN,
+      stage: ProjectStage.IN_PROGRESS,
       start: -4,
       end: 40,
       launch: 48,
@@ -636,17 +636,17 @@ async function main() {
     timingBonus?: number;
     description: string;
   }> = [
-    { code: "BUG-DEMO-CRM-001", title: "标签组合条件切换后预估人数未刷新", taskCode: "TASK-DEMO-CRM-001-FE", assigneeKey: "fe1", reporterKey: "test", level: "L3", environment: "TEST", status: DefectStatus.FIXING, planned: 2, description: "切换标签条件后，预估人数仍展示上一次结果。" },
-    { code: "BUG-DEMO-CRM-002", title: "审批加签后节点顺序异常", taskCode: "TASK-DEMO-CRM-002-BE", assigneeKey: "be2", reporterKey: "test", level: "L2", environment: "TEST", status: DefectStatus.VERIFIED, planned: -4, description: "加签后审批节点顺序偶发错乱，已验证通过。" },
-    { code: "BUG-DEMO-CRM-003", title: "审批列表返回按钮样式错位", taskCode: "TASK-DEMO-CRM-002-FE", assigneeKey: "fe2", reporterKey: "test", level: "L4", environment: "TEST", status: DefectStatus.CLOSED, planned: -6, description: "样式问题，已关闭。" },
+    { code: "BUG-DEMO-CRM-001", title: "标签组合条件切换后预估人数未刷新", taskCode: "TASK-DEMO-CRM-001-FE", assigneeKey: "fe1", reporterKey: "test", level: "L3", environment: "OFFLINE", status: DefectStatus.FIXING, planned: 2, description: "切换标签条件后，预估人数仍展示上一次结果。" },
+    { code: "BUG-DEMO-CRM-002", title: "审批加签后节点顺序异常", taskCode: "TASK-DEMO-CRM-002-BE", assigneeKey: "be2", reporterKey: "test", level: "L2", environment: "OFFLINE", status: DefectStatus.VERIFIED, planned: -4, description: "加签后审批节点顺序偶发错乱，已验证通过。" },
+    { code: "BUG-DEMO-CRM-003", title: "审批列表返回按钮样式错位", taskCode: "TASK-DEMO-CRM-002-FE", assigneeKey: "fe2", reporterKey: "test", level: "L4", environment: "OFFLINE", status: DefectStatus.CLOSED, planned: -6, description: "样式问题，已关闭。" },
     { code: "BUG-DEMO-APP-001", title: "线上权益领取偶发重复扣减", taskCode: "TASK-DEMO-APP-001-BE", assigneeKey: "be1", reporterKey: "test", level: "L1", environment: "ONLINE", status: DefectStatus.TO_FIX, planned: 1, timingBonus: 6, description: "用户重复点击领取时，库存扣减存在并发问题。" },
-    { code: "BUG-DEMO-APP-002", title: "权益领取成功弹窗未关闭", taskCode: "TASK-DEMO-APP-001-FE", assigneeKey: "fe1", reporterKey: "test", level: "L3", environment: "TEST", status: DefectStatus.FIXED, planned: 0, description: "点击返回后弹窗仍停留在页面上。" },
-    { code: "BUG-DEMO-APP-003", title: "积分筛选默认时间为空", taskCode: "TASK-DEMO-APP-002-UI", assigneeKey: "ui", reporterKey: "test", level: "L4", environment: "TEST", status: DefectStatus.TO_FIX, planned: null, description: "未设置默认筛选时间，作为未排期缺陷展示。" },
-    { code: "BUG-DEMO-DATA-001", title: "漏斗看板区域汇总数不一致", taskCode: "TASK-DEMO-DATA-002-DATA", assigneeKey: "data", reporterKey: "test", level: "L2", environment: "TEST", status: DefectStatus.FIXING, planned: 6, description: "区域汇总和门店明细合计存在口径差异。" },
-    { code: "BUG-DEMO-DATA-002", title: "看板查询接口分页总数错误", taskCode: "TASK-DEMO-DATA-002-BE", assigneeKey: "be1", reporterKey: "test", level: "L3", environment: "TEST", status: DefectStatus.TO_FIX, planned: 9, description: "分页 total 返回当前页数量。" },
-    { code: "BUG-DEMO-RISK-001", title: "灰度比例 0% 时仍命中部分用户", taskCode: "TASK-DEMO-RISK-001-BE", assigneeKey: "be2", reporterKey: "test", level: "L2", environment: "GRAY", status: DefectStatus.VERIFIED, planned: -6, description: "灰度比例边界值问题，已验证。" },
-    { code: "BUG-DEMO-RISK-002", title: "命中明细查询条件未带规则版本", taskCode: "TASK-DEMO-RISK-002-BE", assigneeKey: "be2", reporterKey: "test", level: "L2", environment: "TEST", status: DefectStatus.FIXING, planned: 4, description: "查询明细时缺少规则版本过滤，导致展示混淆。" },
-    { code: "BUG-DEMO-RISK-003", title: "规则回放测试报告导出失败", taskCode: "TASK-DEMO-RISK-002-TEST", assigneeKey: "test", reporterKey: "test", level: "L3", environment: "TEST", status: DefectStatus.FIXED, planned: 2, description: "测试报告导出接口返回 500。" }
+    { code: "BUG-DEMO-APP-002", title: "权益领取成功弹窗未关闭", taskCode: "TASK-DEMO-APP-001-FE", assigneeKey: "fe1", reporterKey: "test", level: "L3", environment: "OFFLINE", status: DefectStatus.FIXED, planned: 0, description: "点击返回后弹窗仍停留在页面上。" },
+    { code: "BUG-DEMO-APP-003", title: "积分筛选默认时间为空", taskCode: "TASK-DEMO-APP-002-UI", assigneeKey: "ui", reporterKey: "test", level: "L4", environment: "OFFLINE", status: DefectStatus.TO_FIX, planned: null, description: "未设置默认筛选时间，作为未排期缺陷展示。" },
+    { code: "BUG-DEMO-DATA-001", title: "漏斗看板区域汇总数不一致", taskCode: "TASK-DEMO-DATA-002-DATA", assigneeKey: "data", reporterKey: "test", level: "L2", environment: "OFFLINE", status: DefectStatus.FIXING, planned: 6, description: "区域汇总和门店明细合计存在口径差异。" },
+    { code: "BUG-DEMO-DATA-002", title: "看板查询接口分页总数错误", taskCode: "TASK-DEMO-DATA-002-BE", assigneeKey: "be1", reporterKey: "test", level: "L3", environment: "OFFLINE", status: DefectStatus.TO_FIX, planned: 9, description: "分页 total 返回当前页数量。" },
+    { code: "BUG-DEMO-RISK-001", title: "灰度比例 0% 时仍命中部分用户", taskCode: "TASK-DEMO-RISK-001-BE", assigneeKey: "be2", reporterKey: "test", level: "L2", environment: "OFFLINE", status: DefectStatus.VERIFIED, planned: -6, description: "灰度比例边界值问题，已验证。" },
+    { code: "BUG-DEMO-RISK-002", title: "命中明细查询条件未带规则版本", taskCode: "TASK-DEMO-RISK-002-BE", assigneeKey: "be2", reporterKey: "test", level: "L2", environment: "OFFLINE", status: DefectStatus.FIXING, planned: 4, description: "查询明细时缺少规则版本过滤，导致展示混淆。" },
+    { code: "BUG-DEMO-RISK-003", title: "规则回放测试报告导出失败", taskCode: "TASK-DEMO-RISK-002-TEST", assigneeKey: "test", reporterKey: "test", level: "L3", environment: "OFFLINE", status: DefectStatus.FIXED, planned: 2, description: "测试报告导出接口返回 500。" }
   ];
 
   const defects: Record<string, Awaited<ReturnType<typeof prisma.defect.upsert>>> = {};

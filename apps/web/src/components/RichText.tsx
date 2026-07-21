@@ -1,5 +1,5 @@
-import { Bold, Italic, List, ListOrdered } from "lucide-react";
-import { useRef, useState } from "react";
+import { Bold, Heading2, Italic, Link2, List, ListOrdered, Quote, RemoveFormatting, Strikethrough, Underline, Unlink2 } from "lucide-react";
+import { useRef, useState, type ClipboardEvent } from "react";
 import { normalizeRichText, sanitizeRichTextHtml, stripRichText } from "../lib/richText";
 
 export function RichTextDisplay({ value, emptyText = "-" }: { value?: string | number | null; emptyText?: string }) {
@@ -28,9 +28,27 @@ export function RichTextEditor({
     setHtml(editorRef.current?.innerHTML || "");
   }
 
-  function runCommand(command: string) {
+  function runCommand(command: string, value?: string) {
     editorRef.current?.focus();
-    document.execCommand(command, false);
+    document.execCommand(command, false, value);
+    syncFromEditor();
+  }
+
+  function createLink() {
+    editorRef.current?.focus();
+    const input = window.prompt("请输入链接地址");
+    if (!input) return;
+    const normalized = /^(https?:|mailto:)/i.test(input) ? input : `https://${input}`;
+    document.execCommand("createLink", false, normalized);
+    cleanEditor();
+  }
+
+  function pasteCleanHtml(event: ClipboardEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const html = event.clipboardData.getData("text/html");
+    const text = event.clipboardData.getData("text/plain");
+    const clean = html ? sanitizeRichTextHtml(html) : normalizeRichText(text);
+    document.execCommand("insertHTML", false, clean);
     syncFromEditor();
   }
 
@@ -46,17 +64,41 @@ export function RichTextEditor({
     <div className={required ? "field required rich-editor-field" : "field rich-editor-field"}>
       <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
       <div className="rich-toolbar" aria-label={`${text}格式工具`}>
+        <button type="button" title="标题" onMouseDown={(event) => { event.preventDefault(); runCommand("formatBlock", "H2"); }}>
+          <Heading2 size={15} />
+        </button>
+        <button type="button" title="引用" onMouseDown={(event) => { event.preventDefault(); runCommand("formatBlock", "BLOCKQUOTE"); }}>
+          <Quote size={15} />
+        </button>
+        <span className="rich-toolbar-divider" />
         <button type="button" title="加粗" onMouseDown={(event) => { event.preventDefault(); runCommand("bold"); }}>
           <Bold size={15} />
         </button>
         <button type="button" title="斜体" onMouseDown={(event) => { event.preventDefault(); runCommand("italic"); }}>
           <Italic size={15} />
         </button>
+        <button type="button" title="下划线" onMouseDown={(event) => { event.preventDefault(); runCommand("underline"); }}>
+          <Underline size={15} />
+        </button>
+        <button type="button" title="删除线" onMouseDown={(event) => { event.preventDefault(); runCommand("strikeThrough"); }}>
+          <Strikethrough size={15} />
+        </button>
+        <span className="rich-toolbar-divider" />
         <button type="button" title="无序列表" onMouseDown={(event) => { event.preventDefault(); runCommand("insertUnorderedList"); }}>
           <List size={15} />
         </button>
         <button type="button" title="有序列表" onMouseDown={(event) => { event.preventDefault(); runCommand("insertOrderedList"); }}>
           <ListOrdered size={15} />
+        </button>
+        <span className="rich-toolbar-divider" />
+        <button type="button" title="插入链接" onMouseDown={(event) => { event.preventDefault(); createLink(); }}>
+          <Link2 size={15} />
+        </button>
+        <button type="button" title="取消链接" onMouseDown={(event) => { event.preventDefault(); runCommand("unlink"); }}>
+          <Unlink2 size={15} />
+        </button>
+        <button type="button" title="清除格式" onMouseDown={(event) => { event.preventDefault(); runCommand("removeFormat"); runCommand("formatBlock", "P"); }}>
+          <RemoveFormatting size={15} />
         </button>
       </div>
       <div
@@ -66,6 +108,7 @@ export function RichTextEditor({
         data-placeholder={`填写${text}`}
         suppressContentEditableWarning
         onInput={syncFromEditor}
+        onPaste={pasteCleanHtml}
         onBlur={cleanEditor}
         dangerouslySetInnerHTML={{ __html: initialHtmlRef.current }}
       />

@@ -2,9 +2,9 @@ import { CheckCircle2 } from "lucide-react";
 import { FormEvent } from "react";
 import { projectStageLabel } from "../lib/format";
 import { Project } from "../types";
-import { Textarea } from "./formControls";
+import { Select, Textarea } from "./formControls";
 
-export type ProjectLifecycleAction = "close" | "reopen";
+export type ProjectLifecycleAction = "start" | "close" | "reopen";
 
 export function ProjectLifecycleDialog({
   project,
@@ -20,7 +20,8 @@ export function ProjectLifecycleDialog({
   if (!project || !action) return null;
   const activeProject = project;
   const activeAction = action;
-  const title = activeAction === "close" ? "项目结项" : "重新打开项目";
+  const title = activeAction === "start" ? "启动项目" : activeAction === "close" ? "项目结项" : "重新打开项目";
+  const reasonLabel = activeAction === "start" ? "启动说明" : activeAction === "close" ? "结项说明" : "重新打开原因";
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -40,7 +41,10 @@ export function ProjectLifecycleDialog({
             <strong>{activeProject.name}</strong>
             <em>当前状态：{projectStageLabel(activeProject.stage)}</em>
           </div>
-          <Textarea name="reason" label={activeAction === "close" ? "结项说明" : "重新打开原因"} />
+          {activeAction === "reopen" ? (
+            <Select name="stage" label="重新打开后状态" defaultValue="ONLINE_OPS" options={[["ONLINE_OPS", "上线运维"], ["IN_PROGRESS", "进行中"]]} />
+          ) : null}
+          <Textarea name="reason" label={reasonLabel} />
           <div className="form-actions">
             <button type="button" className="ghost" onClick={onClose}>取消</button>
             <button className="primary" type="submit">
