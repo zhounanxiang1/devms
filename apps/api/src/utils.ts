@@ -26,17 +26,20 @@ export function toBool(value: unknown) {
   return undefined;
 }
 
-export function code(prefix: string) {
-  const now = new Date();
-  const stamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-    String(now.getHours()).padStart(2, "0"),
-    String(now.getMinutes()).padStart(2, "0"),
-    String(now.getSeconds()).padStart(2, "0")
+export function businessDate(value = new Date()) {
+  return [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, "0"),
+    String(value.getDate()).padStart(2, "0")
   ].join("");
-  return `${prefix}-${stamp}-${Math.floor(Math.random() * 9000 + 1000)}`;
+}
+
+export function formatBusinessCode(prefix: string, date: string, sequence: number) {
+  return `${prefix}-${date}-${String(sequence).padStart(4, "0")}`;
+}
+
+export function formatTypedBusinessCode(prefix: string, date: string, typeCode: string, sequence: number) {
+  return `${prefix}-${date}-${typeCode}-${String(sequence).padStart(2, "0")}`;
 }
 
 export function pickDefined<T extends Record<string, unknown>>(input: T) {

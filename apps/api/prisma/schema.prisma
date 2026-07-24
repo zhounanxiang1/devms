@@ -126,13 +126,19 @@ model Person {
   memberships       ProjectMember[]
   requirements      Requirement[]    @relation("RequirementOwner")
   submittedReqs     Requirement[]    @relation("RequirementSubmitter")
+  pmAcceptedReqs    Requirement[]    @relation("RequirementPmAcceptor")
+  uiAcceptedReqs    Requirement[]    @relation("RequirementUiAcceptor")
   tasks             DevTask[]        @relation("TaskAssignee")
+  createdTasks      DevTask[]        @relation("TaskCreator")
+  testingTasks      DevTask[]        @relation("TaskTester")
   defects           Defect[]         @relation("DefectAssignee")
   submittedDefects  Defect[]         @relation("DefectReporter")
+  testingDefects    Defect[]         @relation("DefectTester")
   createdDocuments  ProjectDocument[]
   proposedChanges   RequirementChange[] @relation("RequirementChangeProposer")
   ownedChanges      RequirementChange[] @relation("RequirementChangeOwner")
   releaseVersions   ReleaseVersion[] @relation("VersionReleaseOwner")
+  createdVersions   ReleaseVersion[] @relation("VersionCreator")
   logs              ActivityLog[]
   managedOrgs       Organization[]   @relation("OrgManager")
   createdAt         DateTime         @default(now())
@@ -210,6 +216,17 @@ model DefectPriority {
   updatedAt    DateTime @updatedAt
 }
 
+model CodeSequence {
+  id           Int      @id @default(autoincrement())
+  prefix       String
+  bizDate      String   @db.VarChar(8)
+  currentValue Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([prefix, bizDate])
+}
+
 model Project {
   id                 Int             @id @default(autoincrement())
   code               String          @unique
@@ -220,6 +237,8 @@ model Project {
   plannedStartDate   DateTime?
   plannedEndDate     DateTime?
   expectedLaunchDate DateTime?
+  actualStartDate    DateTime?
+  actualEndDate      DateTime?
   stage              ProjectStage    @default(INITIATED)
   background         String?         @db.Text
   goal               String?         @db.Text
@@ -266,6 +285,7 @@ model ProjectDocument {
   project       Project   @relation(fields: [projectId], references: [id])
   createdBy     Person?   @relation(fields: [createdById], references: [id])
   requirements  RequirementDocument[]
+  tasks         TaskDocument[]
   versions      VersionDocument[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -288,6 +308,12 @@ model Requirement {
   reviewDate         DateTime?
   reviewConclusion   String?
   reviewRecord       String?            @db.Text
+  pmAcceptanceConclusion String?         @db.Text
+  pmAcceptedAt       DateTime?
+  pmAcceptorId       Int?
+  uiAcceptanceConclusion String?         @db.Text
+  uiAcceptedAt       DateTime?
+  uiAcceptorId       Int?
   expectedLaunchDate DateTime?
   actualLaunchDate   DateTime?
   timingBonus        Float              @default(0)
@@ -297,6 +323,8 @@ model Requirement {
   submitterId        Int?
   owner              Person?            @relation("RequirementOwner", fields: [ownerId], references: [id])
   submitter          Person?            @relation("RequirementSubmitter", fields: [submitterId], references: [id])
+  pmAcceptor         Person?            @relation("RequirementPmAcceptor", fields: [pmAcceptorId], references: [id])
+  uiAcceptor         Person?            @relation("RequirementUiAcceptor", fields: [uiAcceptorId], references: [id])
   tasks              DevTask[]
   changes            RequirementChange[] @relation("RequirementChanges")
   linkedChanges      RequirementChange[] @relation("LinkedRequirementChange")
@@ -346,6 +374,8 @@ model DevTask {
   type              String
   status            TaskStatus  @default(TODO)
   assigneeId        Int?
+  createdById       Int?
+  testerId          Int?
   collaboratorIds   String?
   plannedStartDate  DateTime?
   plannedFinishDate DateTime?
@@ -357,7 +387,10 @@ model DevTask {
   project           Project     @relation(fields: [projectId], references: [id])
   requirement       Requirement @relation(fields: [requirementId], references: [id])
   assignee          Person?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creator           Person?     @relation("TaskCreator", fields: [createdById], references: [id])
+  tester            Person?     @relation("TaskTester", fields: [testerId], references: [id])
   defects           Defect[]
+  documents         TaskDocument[]
   logs              ActivityLog[]
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
@@ -374,6 +407,7 @@ model Defect {
   status            DefectStatus @default(TO_FIX)
   assigneeId        Int?
   reporterId        Int?
+  testerId          Int?
   foundAt           DateTime?
   entryPoint        String?
   impactScope       String?      @db.Text
@@ -389,6 +423,7 @@ model Defect {
   plannedStartDate  DateTime?
   plannedFinishDate DateTime?
   plannedFixDate    DateTime?
+  actualStartDate   DateTime?
   actualFixDate     DateTime?
   timingBonus       Float        @default(0)
   timingBonusReason String?      @db.Text
@@ -398,6 +433,7 @@ model Defect {
   version           ReleaseVersion? @relation("DefectFoundInVersion", fields: [versionId], references: [id])
   assignee          Person?      @relation("DefectAssignee", fields: [assigneeId], references: [id])
   reporter          Person?      @relation("DefectReporter", fields: [reporterId], references: [id])
+  tester            Person?      @relation("DefectTester", fields: [testerId], references: [id])
   versionLinks      VersionDefect[]
   logs              ActivityLog[]
   createdAt         DateTime     @default(now())
@@ -415,12 +451,14 @@ model ReleaseVersion {
   actualReleaseAt   DateTime?
   releaseNote       String?      @db.Text
   releaseOwnerId    Int?
+  createdById       Int?
   riskNote          String?      @db.Text
   rollbackPlan      String?      @db.Text
   releaseConclusion String?
   snapshotJson      Json?
   project           Project      @relation(fields: [projectId], references: [id])
   releaseOwner      Person?      @relation("VersionReleaseOwner", fields: [releaseOwnerId], references: [id])
+  creator           Person?      @relation("VersionCreator", fields: [createdById], references: [id])
   requirements      VersionRequirement[]
   defects           VersionDefect[]
   reportedDefects   Defect[]       @relation("DefectFoundInVersion")
@@ -460,6 +498,16 @@ model RequirementDocument {
   document      ProjectDocument @relation(fields: [documentId], references: [id])
 
   @@unique([requirementId, documentId])
+}
+
+model TaskDocument {
+  id         Int             @id @default(autoincrement())
+  taskId     Int
+  documentId Int
+  task       DevTask         @relation(fields: [taskId], references: [id])
+  document   ProjectDocument @relation(fields: [documentId], references: [id])
+
+  @@unique([taskId, documentId])
 }
 
 model VersionDocument {

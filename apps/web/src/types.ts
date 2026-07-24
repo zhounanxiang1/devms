@@ -9,6 +9,8 @@ export type Person = {
   employmentStatus?: string;
   primaryPosition?: { code: string; name: string };
   positions?: { isPrimary?: boolean; position: { code: string; name: string } }[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type Organization = {
@@ -19,6 +21,8 @@ export type Organization = {
   managerId?: number | null;
   status: string;
   sort: number;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type Position = {
@@ -29,6 +33,8 @@ export type Position = {
   description?: string | null;
   isSystem?: boolean;
   isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type Account = {
@@ -39,6 +45,8 @@ export type Account = {
   personId: number;
   person: Person;
   note?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type AuthState = {
@@ -63,9 +71,13 @@ export type Project = {
   plannedStartDate?: string;
   plannedEndDate?: string;
   expectedLaunchDate?: string;
+  actualStartDate?: string | null;
+  actualEndDate?: string | null;
   background?: string | null;
   goal?: string | null;
   relatedSystems?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
   _count?: Record<string, number>;
 };
 
@@ -79,6 +91,10 @@ export type ProjectDocument = {
   version?: string | null;
   project?: Project;
   createdBy?: Person;
+  requirements?: { requirement: Requirement }[];
+  tasks?: { task: DevTask }[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type Requirement = {
@@ -103,7 +119,15 @@ export type Requirement = {
   reviewDate?: string;
   reviewConclusion?: string;
   reviewRecord?: string;
+  pmAcceptanceConclusion?: string | null;
+  pmAcceptedAt?: string | null;
+  pmAcceptor?: Person;
+  uiAcceptanceConclusion?: string | null;
+  uiAcceptedAt?: string | null;
+  uiAcceptor?: Person;
   documents?: { document: ProjectDocument }[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type DevTask = {
@@ -113,12 +137,22 @@ export type DevTask = {
   type: string;
   status: string;
   priorityScore: number;
+  assigneeId?: number | null;
   plannedStartDate?: string;
   plannedFinishDate?: string;
+  actualStartDate?: string;
+  actualFinishDate?: string;
+  completionNote?: string | null;
+  testerId?: number | null;
   project?: Project;
   requirement?: Requirement;
   assignee?: Person;
+  tester?: Person;
+  creator?: Person;
   defects?: Defect[];
+  documents?: { document: ProjectDocument }[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type Defect = {
@@ -129,7 +163,9 @@ export type Defect = {
   status: string;
   environment: string;
   priorityScore: number;
+  assigneeId?: number | null;
   foundAt?: string;
+  testerId?: number | null;
   entryPoint?: string | null;
   impactScope?: string | null;
   precondition?: string | null;
@@ -140,6 +176,7 @@ export type Defect = {
   deviceInfo?: string | null;
   testData?: string | null;
   attachmentUrl?: string | null;
+  actualStartDate?: string | null;
   actualFixDate?: string | null;
   timingBonus?: number;
   timingBonusReason?: string | null;
@@ -151,8 +188,11 @@ export type Defect = {
   task?: DevTask;
   requirement?: Requirement;
   assignee?: Person;
+  tester?: Person;
   reporter?: Person;
   version?: ReleaseVersion;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type ReleaseVersion = {
@@ -162,9 +202,34 @@ export type ReleaseVersion = {
   status: string;
   type: string;
   plannedReleaseAt?: string;
+  actualReleaseAt?: string | null;
   project?: Project;
+  releaseOwner?: Person;
+  creator?: Person;
   requirements?: { requirement: Requirement }[];
   defects?: { defect: Defect }[];
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ActivityLog = {
+  id: number;
+  summary: string;
+  entityType: string;
+  entityId?: number | null;
+  projectId?: number | null;
+  requirementId?: number | null;
+  taskId?: number | null;
+  defectId?: number | null;
+  versionId?: number | null;
+  action?: string;
+  createdAt: string;
+  actor?: Person;
+  project?: Project | null;
+  requirement?: Requirement | null;
+  task?: DevTask | null;
+  defect?: Defect | null;
+  version?: ReleaseVersion | null;
 };
 
 export type AdminData = {
@@ -175,5 +240,5 @@ export type AdminData = {
   dictionaries: Array<{ id: number; type: string; code: string; name: string; description?: string | null; isSystem?: boolean; isActive: boolean; sort?: number }>;
   requirementPriorities: Array<{ id: number; code: string; name: string; description?: string | null; baseScore: number; defectWeight: number; isActive?: boolean; sort?: number }>;
   defectPriorities: Array<{ id: number; code: string; name: string; description?: string | null; onlineScore: number; offlineScore: number; isActive?: boolean; sort?: number }>;
-  logs: Array<{ id: number; summary: string; createdAt: string; actor?: Person }>;
+  logs: ActivityLog[];
 };

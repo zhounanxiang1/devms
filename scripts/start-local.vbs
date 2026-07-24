@@ -8,21 +8,56 @@ If Not fso.FileExists(nodeExe) Then nodeExe = "node"
 mysqlExe = "D:\mysql\mysql-8.4.10-winx64\bin\mysqld.exe"
 q = Chr(34)
 
-Function IsProcessRunning(processName)
-  Set service = GetObject("winmgmts:\\.\root\cimv2")
-  Set processes = service.ExecQuery("SELECT * FROM Win32_Process WHERE Name='" & processName & "'")
-  IsProcessRunning = processes.Count > 0
+Function IsPortListening(port)
+  command = "cmd.exe /d /c netstat -ano | findstr /C:" & q & ":" & port & " " & q
+  Set exec = shell.Exec(command)
+  output = exec.StdOut.ReadAll
+  IsPortListening = InStr(output, "LISTENING") > 0
 End Function
 
-If fso.FileExists(mysqlExe) And Not IsProcessRunning("mysqld.exe") Then
-  mysqlCmd = q & mysqlExe & q & " --basedir=D:\mysql\mysql-8.4.10-winx64 --datadir=D:\mysql\data --port=3306 --log-error=D:\mysql\logs\mysql.err"
-  shell.Run mysqlCmd, 0, False
-  WScript.Sleep 5000
+Sub WaitForPort(port, seconds)
+  For i = 1 To seconds
+    If IsPortListening(port) Then Exit Sub
+    WScript.Sleep 1000
+  Next
+End Sub
+
+If Not IsPortListening(3306) Then
+  WScript.Echo "Starting MySQL..."
+  If Not fso.FileExists(mysqlExe) Then
+    WScript.Echo "MySQL not found: " & mysqlExe
+  Else
+    mysqlCmd = q & mysqlExe & q & " --basedir=D:\mysql\mysql-8.4.10-winx64 --datadir=D:\mysql\data --port=3306 --log-error=D:\mysql\logs\mysql.err"
+    shell.Run mysqlCmd, 0, False
+    WaitForPort 3306, 20
+  End If
+Else
+  WScript.Echo "MySQL is already running."
 End If
 
-apiCmd = "cmd.exe /d /c " & q & q & nodeExe & q & " apps\api\dist\main.js >> api-run.log 2>> api-run.err.log" & q
-webCmd = "cmd.exe /d /c " & q & q & nodeExe & q & " node_modules\vite\bin\vite.js apps\web --host 0.0.0.0 --port 5174 --strictPort >> web-run.log 2>> web-run.err.log" & q
+If Not IsPortListening(4000) Then
+  If IsPortListening(3306) Then
+    WScript.Echo "Starting API..."
+    apiCmd = "cmd.exe /d /c " & q & q & nodeExe & q & " apps\api\dist\main.js >> api-run.log 2>> api-run.err.log" & q
+    shell.Run apiCmd, 0, False
+    WaitForPort 4000, 20
+  Else
+    WScript.Echo "MySQL did not start. API skipped."
+    WScript.Echo "Check log: D:\mysql\logs\mysql.err"
+  End If
+Else
+  WScript.Echo "API is already running."
+End If
 
-shell.Run apiCmd, 0, False
-shell.Run webCmd, 0, False
+If Not IsPortListening(5174) Then
+  WScript.Echo "Starting Web..."
+  webCmd = "cmd.exe /d /c " & q & q & nodeExe & q & " node_modules\vite\bin\vite.js apps\web --host 0.0.0.0 --port 5174 --strictPort >> web-run.log 2>> web-run.err.log" & q
+  shell.Run webCmd, 0, False
+  WaitForPort 5174, 20
+Else
+  WScript.Echo "Web is already running."
+End If
 
+WScript.Echo "Start task finished."
+WScript.Echo "Web: http://localhost:5174/"
+WScript.Echo "API: http://localhost:4000/api"

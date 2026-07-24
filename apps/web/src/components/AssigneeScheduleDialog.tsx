@@ -1,8 +1,10 @@
 import { RotateCcw, Save, X } from "lucide-react";
+import { Select as AntSelect } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { label } from "../lib/format";
 import { Defect, DevTask } from "../types";
+import { DateRangeValue, matchSearchOption, TableSearchControl, TableSearchOption } from "./TableSearchControl";
 
 export type ScheduleChange = {
   kind: "task" | "defect";
@@ -20,15 +22,29 @@ type ScheduleItem = {
   id: string;
   rawId: number;
   kind: "task" | "defect";
+  isDraft?: boolean;
+  assigneeId?: number | null;
+  code: string;
   title: string;
   status: string;
   projectName: string;
-  sourceName: string;
+  requirementName: string;
+  taskName: string;
   priorityScore: number;
   start: Date | null;
   end: Date | null;
   originalStart: Date | null;
   originalEnd: Date | null;
+};
+
+export type DraftScheduleItem = {
+  title: string;
+  projectName?: string;
+  requirementName?: string;
+  sourceName?: string;
+  priorityScore?: number;
+  plannedStartDate?: string;
+  plannedFinishDate?: string;
 };
 
 type DragState = {
@@ -44,7 +60,39 @@ type DragState = {
   originalEnd: Date;
 };
 
+type HoverTip = {
+  content: string;
+  x: number;
+  y: number;
+  placement: "top" | "bottom";
+};
+
+type InfoColumnKey = "title" | "kind" | "status" | "dates" | "score";
+
+type ColumnResizeState = {
+  column: InfoColumnKey;
+  pointerStartX: number;
+  startWidth: number;
+};
+
 const DAY_MS = 24 * 60 * 60 * 1000;
+const INFO_GRID_GAP = 8;
+const INFO_PANEL_PADDING_RIGHT = 12;
+const INFO_COLUMN_KEYS: InfoColumnKey[] = ["title", "kind", "status", "dates", "score"];
+const INFO_COLUMN_DEFAULT_WIDTHS: Record<InfoColumnKey, number> = {
+  title: 170,
+  kind: 74,
+  status: 82,
+  dates: 300,
+  score: 76
+};
+const INFO_COLUMN_LIMITS: Record<InfoColumnKey, { min: number; max: number }> = {
+  title: { min: 120, max: 360 },
+  kind: { min: 68, max: 130 },
+  status: { min: 76, max: 150 },
+  dates: { min: 290, max: 430 },
+  score: { min: 70, max: 130 }
+};
 const DEFAULT_TASK_STATUSES = ["TODO", "DOING"];
 const DEFAULT_DEFECT_STATUSES = ["TO_FIX", "FIXING"];
 const TASK_STATUS_ORDER = ["TODO", "DOING", "TO_TEST", "TESTING", "TEST_PASSED", "CLOSED"];
@@ -85,6 +133,11 @@ function addDays(date: Date, days: number) {
   return next;
 }
 
+function todayDate() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
 function normalizeScheduleRange(start?: Date | null, end?: Date | null): DateRange {
   const normalizedStart = start || end || null;
   const normalizedEnd = end || start || null;
@@ -107,7 +160,23 @@ function buildStatusOptions(preferredOrder: string[], currentStatuses: string[])
   });
 }
 
-function buildItems(tasks: DevTask[], defects: Defect[], overrides: Record<string, DateRange>): ScheduleItem[] {
+function infoGridTemplate(widths: Record<InfoColumnKey, number>) {
+  return INFO_COLUMN_KEYS.map((key) => `${widths[key]}px`).join(" ");
+}
+
+function infoPanelWidth(widths: Record<InfoColumnKey, number>) {
+  return INFO_COLUMN_KEYS.reduce((total, key) => total + widths[key], 0) + INFO_GRID_GAP * (INFO_COLUMN_KEYS.length - 1) + INFO_PANEL_PADDING_RIGHT;
+}
+
+function clampInfoColumnWidth(column: InfoColumnKey, width: number) {
+  const limit = INFO_COLUMN_LIMITS[column];
+  return Math.min(limit.max, Math.max(limit.min, width));
+}
+
+function buildItems(tasks: DevTask[], defects: Defect[], overrides: Record<string, DateRange>, draftItem?: DraftScheduleItem | null): ScheduleItem[] {
+  const draftStart = draftItem ? parseDateOnly(draftItem.plannedStartDate) || todayDate() : null;
+  const draftEnd = draftItem ? parseDateOnly(draftItem.plannedFinishDate) || draftStart : null;
+  const draftOriginal = normalizeScheduleRange(draftStart, draftEnd);
   return [
     ...tasks.map((task) => {
       const original = normalizeScheduleRange(parseDateOnly(task.plannedStartDate), parseDateOnly(task.plannedFinishDate));
@@ -117,10 +186,13 @@ function buildItems(tasks: DevTask[], defects: Defect[], overrides: Record<strin
         id: key,
         rawId: task.id,
         kind: "task" as const,
+        assigneeId: task.assigneeId || task.assignee?.id,
+        code: task.code,
         title: task.title,
         status: task.status,
         projectName: task.project?.name || "-",
-        sourceName: task.requirement?.title || "-",
+        requirementName: task.requirement?.title || "-",
+        taskName: "-",
         priorityScore: task.priorityScore || 0,
         start: current.start,
         end: current.end,
@@ -136,17 +208,38 @@ function buildItems(tasks: DevTask[], defects: Defect[], overrides: Record<strin
         id: key,
         rawId: defect.id,
         kind: "defect" as const,
+        assigneeId: defect.assigneeId || defect.assignee?.id,
+        code: defect.code,
         title: defect.title,
         status: defect.status,
         projectName: defect.project?.name || defect.task?.project?.name || "-",
-        sourceName: defect.task?.title || "-",
+        requirementName: defect.task?.requirement?.title || defect.requirement?.title || "-",
+        taskName: defect.task?.title || "-",
         priorityScore: defect.priorityScore || 0,
         start: current.start,
         end: current.end,
         originalStart: original.start,
         originalEnd: original.end
       };
-    })
+    }),
+    ...(draftItem ? [{
+      id: "draft-task",
+      rawId: 0,
+      kind: "task" as const,
+      isDraft: true,
+      assigneeId: undefined,
+      code: "当前表单",
+      title: draftItem.title || "当前新建任务",
+      status: "TODO",
+      projectName: draftItem.projectName || "-",
+      requirementName: draftItem.requirementName || draftItem.sourceName || "-",
+      taskName: "-",
+      priorityScore: draftItem.priorityScore || 0,
+      start: (overrides["draft-task"] || draftOriginal).start,
+      end: (overrides["draft-task"] || draftOriginal).end,
+      originalStart: draftOriginal.start,
+      originalEnd: draftOriginal.end
+    }] : [])
   ];
 }
 
@@ -158,10 +251,19 @@ function dateRangeText(item: ScheduleItem) {
   return `${formatFullDate(item.start)} 至 ${formatFullDate(item.end)}`;
 }
 
-function selectedStatusText(selectedValues: string[], options: string[]) {
-  if (!selectedValues.length) return "未选择状态";
-  if (selectedValues.length === options.length) return "全部状态";
-  return selectedValues.map(label).join("、");
+function canEditItemSchedule(item: ScheduleItem) {
+  if (item.isDraft) return true;
+  return item.kind === "task" ? DEFAULT_TASK_STATUSES.includes(item.status) : DEFAULT_DEFECT_STATUSES.includes(item.status);
+}
+
+function canEditItemByPerson(item: ScheduleItem, personId?: number | string) {
+  if (item.isDraft) return true;
+  return Boolean(personId && item.assigneeId && String(item.assigneeId) === String(personId));
+}
+
+function scheduleDisabledReason(item: ScheduleItem) {
+  if (item.kind === "task") return "只有待处理或处理中的任务可以调整排期";
+  return "只有待修复或修复中的缺陷可以调整排期";
 }
 
 function eachDay(start: Date, end: Date) {
@@ -177,7 +279,10 @@ export function AssigneeScheduleDialog({
   assigneeName,
   tasks,
   defects,
+  draftItem,
+  embedded = false,
   onClose,
+  onDraftScheduleChange,
   onSaveChanges
 }: {
   assigneeId?: number | string;
@@ -185,13 +290,22 @@ export function AssigneeScheduleDialog({
   assigneeName?: string;
   tasks: DevTask[];
   defects: Defect[];
+  draftItem?: DraftScheduleItem | null;
+  embedded?: boolean;
   onClose: () => void;
+  onDraftScheduleChange?: (plannedStartDate: string, plannedFinishDate: string) => void;
   onSaveChanges: (changes: ScheduleChange[]) => Promise<boolean>;
 }) {
   const [selectedTaskStatuses, setSelectedTaskStatuses] = useState<string[]>(DEFAULT_TASK_STATUSES);
   const [selectedDefectStatuses, setSelectedDefectStatuses] = useState<string[]>(DEFAULT_DEFECT_STATUSES);
   const [overrides, setOverrides] = useState<Record<string, DateRange>>({});
+  const [searchField, setSearchField] = useState("title");
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [searchDateRange, setSearchDateRange] = useState<DateRangeValue>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [columnResizeState, setColumnResizeState] = useState<ColumnResizeState | null>(null);
+  const [infoColumnWidths, setInfoColumnWidths] = useState<Record<InfoColumnKey, number>>(INFO_COLUMN_DEFAULT_WIDTHS);
+  const [hoverTip, setHoverTip] = useState<HoverTip | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const canEditSchedule = Boolean(assigneeId && currentPersonId && String(assigneeId) === String(currentPersonId));
@@ -200,28 +314,53 @@ export function AssigneeScheduleDialog({
     setSelectedTaskStatuses(DEFAULT_TASK_STATUSES);
     setSelectedDefectStatuses(DEFAULT_DEFECT_STATUSES);
     setOverrides({});
+    setSearchField("title");
+    setSearchKeyword("");
+    setSearchDateRange(null);
     setMessage("");
   }, [assigneeId]);
 
   const taskStatusOptions = useMemo(() => buildStatusOptions(TASK_STATUS_ORDER, tasks.map((task) => task.status)), [tasks]);
   const defectStatusOptions = useMemo(() => buildStatusOptions(DEFECT_STATUS_ORDER, defects.map((defect) => defect.status)), [defects]);
-  const baseItems = useMemo(() => buildItems(tasks, defects, overrides), [tasks, defects, overrides]);
+  const taskStatusSelectOptions = taskStatusOptions.map((status) => ({ value: status, label: label(status) }));
+  const defectStatusSelectOptions = defectStatusOptions.map((status) => ({ value: status, label: label(status) }));
+  const baseItems = useMemo(() => buildItems(tasks, defects, overrides, draftItem), [tasks, defects, overrides, draftItem]);
+  const searchOptions: Array<TableSearchOption<ScheduleItem>> = [
+    { value: "title", label: "事项", type: "text", reader: (item) => item.title },
+    { value: "code", label: "编号", type: "text", reader: (item) => item.code },
+    { value: "project", label: "所属项目", type: "text", reader: (item) => item.projectName },
+    { value: "requirement", label: "关联需求", type: "text", reader: (item) => item.requirementName },
+    { value: "task", label: "关联任务", type: "text", reader: (item) => item.taskName },
+    { value: "plannedStartDate", label: "计划开始", type: "date", reader: (item) => item.start },
+    { value: "plannedFinishDate", label: "计划完成", type: "date", reader: (item) => item.end }
+  ];
 
   const visibleItems = baseItems
-    .filter((item) => (item.kind === "task" ? selectedTaskStatuses.includes(item.status) : selectedDefectStatuses.includes(item.status)))
+    .filter((item) => item.isDraft || (item.kind === "task" ? !selectedTaskStatuses.length || selectedTaskStatuses.includes(item.status) : !selectedDefectStatuses.length || selectedDefectStatuses.includes(item.status)))
+    .filter((item) => matchSearchOption(item, searchField, searchKeyword, searchDateRange, searchOptions))
     .sort(sortByPriority);
   const scheduledItems = visibleItems.filter((item) => item.start && item.end);
-  const unscheduledItems = visibleItems.filter((item) => !item.start || !item.end);
   const minStart = scheduledItems.reduce<Date | null>((min, item) => (!min || (item.start && item.start < min) ? item.start : min), null);
   const maxEnd = scheduledItems.reduce<Date | null>((max, item) => (!max || (item.end && item.end > max) ? item.end : max), null);
-  const chartStart = minStart ? addDays(minStart, -7) : null;
-  const chartEnd = maxEnd ? addDays(maxEnd, 14) : null;
-  const chartDays = chartStart && chartEnd ? eachDay(chartStart, chartEnd) : [];
+  const chartStart = addDays(minStart || todayDate(), -7);
+  const chartEnd = addDays(maxEnd || todayDate(), 14);
+  const chartDays = eachDay(chartStart, chartEnd);
   const totalDays = Math.max(1, chartDays.length);
+  const timelineGridStyle = {
+    gridTemplateColumns: `repeat(${totalDays}, 42px)`,
+    minWidth: `${Math.max(560, totalDays * 42)}px`
+  };
+  const infoTemplate = infoGridTemplate(infoColumnWidths);
+  const infoGridStyle = {
+    gridTemplateColumns: infoTemplate
+  };
+  const ganttGridStyle = {
+    gridTemplateColumns: `${infoPanelWidth(infoColumnWidths)}px minmax(560px, 1fr)`
+  };
   const pendingChanges = Object.entries(overrides)
     .map(([id, range]) => {
       const item = baseItems.find((candidate) => candidate.id === id);
-      if (!item || !range.start || !range.end || isSameRange({ start: item.originalStart, end: item.originalEnd }, range)) return null;
+      if (!item || item.isDraft || !range.start || !range.end || isSameRange({ start: item.originalStart, end: item.originalEnd }, range)) return null;
       return {
         kind: item.kind,
         id: item.rawId,
@@ -230,6 +369,13 @@ export function AssigneeScheduleDialog({
       };
     })
     .filter(Boolean) as ScheduleChange[];
+  const pendingDraftRange = (() => {
+    const draft = baseItems.find((item) => item.isDraft);
+    const range = overrides["draft-task"];
+    if (!draft || !range?.start || !range.end || isSameRange({ start: draft.originalStart, end: draft.originalEnd }, range)) return null;
+    return range;
+  })();
+  const pendingCount = pendingChanges.length + (pendingDraftRange ? 1 : 0);
 
   useEffect(() => {
     if (!dragState) return;
@@ -269,25 +415,51 @@ export function AssigneeScheduleDialog({
     };
   }, [dragState]);
 
-  function toggleStatus(kind: "task" | "defect", status: string) {
-    const updater = (values: string[]) => (values.includes(status) ? values.filter((item) => item !== status) : [...values, status]);
-    if (kind === "task") setSelectedTaskStatuses(updater);
-    else setSelectedDefectStatuses(updater);
-  }
-
-  function resetFilters() {
-    setSelectedTaskStatuses(DEFAULT_TASK_STATUSES);
-    setSelectedDefectStatuses(DEFAULT_DEFECT_STATUSES);
-  }
+  useEffect(() => {
+    if (!columnResizeState) return;
+    const activeResize = columnResizeState;
+    function handlePointerMove(event: globalThis.PointerEvent) {
+      const nextWidth = clampInfoColumnWidth(activeResize.column, activeResize.startWidth + event.clientX - activeResize.pointerStartX);
+      setInfoColumnWidths((current) => ({ ...current, [activeResize.column]: nextWidth }));
+    }
+    function handlePointerUp() {
+      setColumnResizeState(null);
+    }
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [columnResizeState]);
 
   function resetChanges() {
     setOverrides({});
     setMessage("");
   }
 
+  function beginColumnResize(event: ReactPointerEvent<HTMLButtonElement>, column: InfoColumnKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setColumnResizeState({
+      column,
+      pointerStartX: event.clientX,
+      startWidth: infoColumnWidths[column]
+    });
+  }
+
   function beginResize(event: ReactPointerEvent<HTMLButtonElement>, item: ScheduleItem, edge: "start" | "end") {
     if (!canEditSchedule) {
       setMessage("只能调整自己的排期");
+      return;
+    }
+    if (!canEditItemByPerson(item, currentPersonId)) {
+      setMessage("只能调整自己作为负责人的事项排期");
+      return;
+    }
+    if (!canEditItemSchedule(item)) {
+      setMessage(scheduleDisabledReason(item));
       return;
     }
     if (!item.start || !item.end || !chartStart) return;
@@ -310,125 +482,219 @@ export function AssigneeScheduleDialog({
     });
   }
 
+  function updateDateInput(item: ScheduleItem, edge: "start" | "end", value: string) {
+    if (!canEditSchedule) {
+      setMessage("只能调整自己的排期");
+      return;
+    }
+    if (!canEditItemByPerson(item, currentPersonId)) {
+      setMessage("只能调整自己作为负责人的事项排期");
+      return;
+    }
+    if (!canEditItemSchedule(item)) {
+      setMessage(scheduleDisabledReason(item));
+      return;
+    }
+    const selectedDate = parseDateOnly(value);
+    if (!selectedDate) return;
+    const currentStart = item.start || item.end || selectedDate;
+    const currentEnd = item.end || item.start || selectedDate;
+    let nextStart = edge === "start" ? selectedDate : currentStart;
+    let nextEnd = edge === "end" ? selectedDate : currentEnd;
+    if (nextStart.getTime() > nextEnd.getTime()) {
+      if (edge === "start") nextEnd = nextStart;
+      else nextStart = nextEnd;
+    }
+    const original = { start: item.originalStart, end: item.originalEnd };
+    const nextRange = { start: nextStart, end: nextEnd };
+    setOverrides((current) => {
+      if (isSameRange(original, nextRange)) {
+        const { [item.id]: _discard, ...rest } = current;
+        return rest;
+      }
+      return { ...current, [item.id]: nextRange };
+    });
+    setMessage("");
+  }
+
+  function showHoverTip(content: string, event: ReactMouseEvent<HTMLElement>) {
+    const placement = event.clientY < 150 ? "bottom" : "top";
+    setHoverTip({
+      content,
+      x: Math.max(12, Math.min(event.clientX + 14, window.innerWidth - 340)),
+      y: placement === "top" ? event.clientY - 14 : event.clientY + 18,
+      placement
+    });
+  }
+
   async function saveChanges() {
     if (!canEditSchedule) {
       setMessage("只能调整自己的排期");
       return;
     }
-    if (!pendingChanges.length) return;
+    const invalidPendingChange = pendingChanges.some((change) => {
+      const item = baseItems.find((candidate) => candidate.kind === change.kind && candidate.rawId === change.id);
+      return item ? !canEditItemSchedule(item) : true;
+    });
+    if (invalidPendingChange) {
+      setMessage("只有待处理/处理中的开发任务、待修复/修复中的缺陷可以调整排期");
+      return;
+    }
+    if (!pendingCount) return;
     setSaving(true);
     setMessage("");
-    const success = await onSaveChanges(pendingChanges);
+    const success = pendingChanges.length ? await onSaveChanges(pendingChanges) : true;
     setSaving(false);
     if (success) {
+      if (pendingDraftRange?.start && pendingDraftRange.end) {
+        onDraftScheduleChange?.(dateToInput(pendingDraftRange.start), dateToInput(pendingDraftRange.end));
+      }
       setOverrides({});
-      setMessage("排期已保存");
+      setMessage(pendingChanges.length ? "排期已保存" : "当前表单排期已同步");
     } else {
       setMessage("保存失败，请查看页面顶部提示");
     }
   }
 
-  return (
-    <div className="gantt-backdrop">
-      <aside className="gantt-modal">
+  const content = (
+    <>
         <div className="section-title gantt-titlebar">
           <div>
             <h2>{assigneeName || "未选择负责人"}的排期情况</h2>
             <span className="section-note">
-              开发任务 {tasks.length} 项，缺陷修复 {defects.length} 项{canEditSchedule ? "；拖动左右边界可调整计划起止时间" : "；仅负责人本人可调整排期"}
+              开发任务 {tasks.length} 项，缺陷修复 {defects.length} 项{canEditSchedule ? "；待处理/处理中的任务和待修复/修复中的缺陷可调整排期" : "；仅负责人本人可调整排期"}
             </span>
           </div>
           <div className="gantt-title-actions">
             {canEditSchedule ? (
               <>
-                <button className="ghost" type="button" onClick={resetChanges} disabled={!pendingChanges.length || saving}>
+                <button className="ghost" type="button" onClick={resetChanges} disabled={!pendingCount || saving}>
                   <RotateCcw size={17} /> 撤销调整
                 </button>
-                <button className="primary" type="button" onClick={saveChanges} disabled={!pendingChanges.length || saving}>
-                  <Save size={17} /> 保存排期{pendingChanges.length ? `（${pendingChanges.length}）` : ""}
+                <button className="primary" type="button" onClick={saveChanges} disabled={!pendingCount || saving}>
+                  <Save size={17} /> 保存排期{pendingCount ? `（${pendingCount}）` : ""}
                 </button>
               </>
             ) : null}
-            <button className="ghost icon-button" type="button" onClick={onClose} title="关闭">
-              <X size={18} />
-            </button>
+            {!embedded ? (
+              <button className="ghost icon-button" type="button" onClick={onClose} title="关闭">
+                <X size={18} />
+              </button>
+            ) : null}
           </div>
         </div>
 
         <div className="gantt-toolbar">
-          <details className="status-multiselect">
-            <summary>
-              <span>开发任务状态</span>
-              <strong>{selectedStatusText(selectedTaskStatuses, taskStatusOptions)}</strong>
-            </summary>
-            <div className="status-menu">
-              {taskStatusOptions.map((status) => (
-                <label key={status}>
-                  <input type="checkbox" checked={selectedTaskStatuses.includes(status)} onChange={() => toggleStatus("task", status)} />
-                  {label(status)}
-                </label>
-              ))}
-            </div>
-          </details>
-          <details className="status-multiselect">
-            <summary>
-              <span>缺陷修复状态</span>
-              <strong>{selectedStatusText(selectedDefectStatuses, defectStatusOptions)}</strong>
-            </summary>
-            <div className="status-menu">
-              {defectStatusOptions.map((status) => (
-                <label key={status}>
-                  <input type="checkbox" checked={selectedDefectStatuses.includes(status)} onChange={() => toggleStatus("defect", status)} />
-                  {label(status)}
-                </label>
-              ))}
-            </div>
-          </details>
-          <button className="ghost" type="button" onClick={resetFilters}>恢复默认状态</button>
+          <TableSearchControl
+            options={searchOptions}
+            field={searchField}
+            keyword={searchKeyword}
+            dateRange={searchDateRange}
+            onFieldChange={setSearchField}
+            onKeywordChange={setSearchKeyword}
+            onDateRangeChange={setSearchDateRange}
+          />
+          <AntSelect
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            className="gantt-filter-select"
+            placeholder="开发任务状态"
+            value={selectedTaskStatuses}
+            options={taskStatusSelectOptions}
+            onChange={setSelectedTaskStatuses}
+          />
+          <AntSelect
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            className="gantt-filter-select"
+            placeholder="缺陷修复状态"
+            value={selectedDefectStatuses}
+            options={defectStatusSelectOptions}
+            onChange={setSelectedDefectStatuses}
+          />
         </div>
 
         <div className="gantt-content">
-          {scheduledItems.length ? (
+          {visibleItems.length ? (
             <div className="gantt-scroll">
               <div className="gantt-body">
-                <div className="gantt-grid-header">
-                  <span>事项</span>
-                  <span>起止时间</span>
-                  <span>优先级分数</span>
-                  <div className="gantt-axis" style={{ gridTemplateColumns: `repeat(${totalDays}, minmax(32px, 1fr))` }}>
+                <div className="gantt-grid-header" style={ganttGridStyle}>
+                  <div className="gantt-info-head" style={infoGridStyle}>
+                    {[
+                      ["title", "事项"],
+                      ["kind", "类型"],
+                      ["status", "状态"],
+                      ["dates", "起止时间"],
+                      ["score", "优先级分数"]
+                    ].map(([key, text]) => (
+                      <span className="gantt-head-cell" key={key}>
+                        {text}
+                        <button
+                          className="gantt-column-resizer"
+                          type="button"
+                          aria-label={`调整${text}列宽`}
+                          title={`拖拽调整${text}列宽`}
+                          onPointerDown={(event) => beginColumnResize(event, key as InfoColumnKey)}
+                        />
+                      </span>
+                    ))}
+                  </div>
+                  <div className="gantt-axis" style={timelineGridStyle}>
                     {chartDays.map((day) => (
                       <span key={day.toISOString()} className={day.getDate() === 1 ? "month-start" : ""}>{formatScheduleDate(day)}</span>
                     ))}
                   </div>
                 </div>
                 <div className="gantt-list">
-                  {scheduledItems.map((item) => {
+                  {visibleItems.map((item) => {
+                    const itemCanEditSchedule = canEditSchedule && canEditItemByPerson(item, currentPersonId) && canEditItemSchedule(item);
                     const durationDays = item.start && item.end ? Math.max(1, diffDays(item.start, item.end) + 1) : 1;
-                    const startIndex = item.start && chartStart ? Math.max(0, diffDays(chartStart, item.start)) : 0;
-                    const tooltip = `${item.title}｜优先级分数：${item.priorityScore}｜${dateRangeText(item)}`;
+                    const startIndex = item.start ? Math.max(0, diffDays(chartStart, item.start)) : 0;
+                    const contextParts = [
+                      `项目：${item.projectName}`,
+                      `需求：${item.requirementName}`,
+                      item.taskName !== "-" ? `任务：${item.taskName}` : null
+                    ].filter(Boolean) as string[];
+                    const tooltipText = `${item.title}｜${label(item.status)}｜优先级分数：${item.priorityScore}｜${dateRangeText(item)}｜${contextParts.join("｜")}`;
                     return (
-                      <div className={overrides[item.id] ? "gantt-row changed" : "gantt-row"} key={item.id}>
-                        <div className="gantt-label">
-                          <strong>{item.title}</strong>
-                          <span>{item.kind === "task" ? "开发任务" : "缺陷修复"} · {label(item.status)} · {item.projectName} / {item.sourceName}</span>
-                        </div>
-                        <div className="gantt-date-range">{dateRangeText(item)}</div>
-                        <div className="gantt-score">{item.priorityScore}</div>
-                        <div className="gantt-track" style={{ gridTemplateColumns: `repeat(${totalDays}, minmax(32px, 1fr))` }}>
-                          <div
-                            className={`gantt-bar ${item.kind === "defect" ? "defect" : "task"} ${canEditSchedule ? "" : "readonly"}`}
-                            style={{ gridColumn: `${startIndex + 1} / span ${durationDays}` }}
-                            title={tooltip}
-                            data-tooltip={tooltip}
-                          >
-                            {canEditSchedule ? (
-                              <button className="gantt-resize-handle start" type="button" aria-label="调整开始时间" onPointerDown={(event) => beginResize(event, item, "start")} />
-                            ) : null}
-                            <span>{item.kind === "task" ? "开发任务" : "缺陷修复"}</span>
-                            {canEditSchedule ? (
-                              <button className="gantt-resize-handle end" type="button" aria-label="调整结束时间" onPointerDown={(event) => beginResize(event, item, "end")} />
-                            ) : null}
+                      <div className={`${overrides[item.id] ? "gantt-row changed" : "gantt-row"} ${item.isDraft ? "current-draft" : ""}`} key={item.id} style={ganttGridStyle}>
+                        <div className="gantt-row-info" style={infoGridStyle}>
+                          <div className="gantt-label" title={`${item.title}\n${contextParts.join("\n")}`}>
+                            <strong>{item.title}</strong>
+                            <span>{item.isDraft ? `当前表单，提交前不会创建正式任务 / ${contextParts.join(" / ")}` : contextParts.join(" / ")}</span>
                           </div>
+                          <div className="gantt-cell">{item.isDraft ? "当前新建" : item.kind === "task" ? "开发任务" : "缺陷修复"}</div>
+                          <div className="gantt-cell">{label(item.status)}</div>
+                          <div className="gantt-date-editor">
+                            <input type="date" value={dateToInput(item.start)} disabled={!itemCanEditSchedule} title={itemCanEditSchedule ? "调整计划开始时间" : scheduleDisabledReason(item)} onChange={(event) => updateDateInput(item, "start", event.target.value)} aria-label="计划开始时间" />
+                            <span>至</span>
+                            <input type="date" value={dateToInput(item.end)} disabled={!itemCanEditSchedule} title={itemCanEditSchedule ? "调整计划结束时间" : scheduleDisabledReason(item)} onChange={(event) => updateDateInput(item, "end", event.target.value)} aria-label="计划结束时间" />
+                          </div>
+                          <div className="gantt-score">{item.priorityScore}</div>
+                        </div>
+                        <div className={item.start && item.end ? "gantt-track" : "gantt-track unscheduled"} style={timelineGridStyle}>
+                          {item.start && item.end ? (
+                            <div
+                              className={`gantt-bar ${item.isDraft ? "draft" : item.kind === "defect" ? "defect" : "task"} ${itemCanEditSchedule ? "" : "readonly"}`}
+                              style={{ gridColumn: `${startIndex + 1} / span ${durationDays}` }}
+                              aria-label={tooltipText}
+                              onMouseEnter={(event) => showHoverTip(tooltipText, event)}
+                              onMouseMove={(event) => showHoverTip(tooltipText, event)}
+                              onMouseLeave={() => setHoverTip(null)}
+                            >
+                              {itemCanEditSchedule ? (
+                                <button className="gantt-resize-handle start" type="button" aria-label="调整开始时间" onPointerDown={(event) => beginResize(event, item, "start")} />
+                              ) : null}
+                              <span>{item.title}</span>
+                              {itemCanEditSchedule ? (
+                                <button className="gantt-resize-handle end" type="button" aria-label="调整结束时间" onPointerDown={(event) => beginResize(event, item, "end")} />
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="gantt-unscheduled-marker">未排期</span>
+                          )}
                         </div>
                       </div>
                     );
@@ -437,22 +703,21 @@ export function AssigneeScheduleDialog({
               </div>
             </div>
           ) : (
-            <div className="gantt-empty">暂无符合筛选条件的已排期事项</div>
+            <div className="gantt-empty">暂无符合筛选条件的排期事项</div>
           )}
-          {unscheduledItems.length ? (
-            <div className="unscheduled-list">
-              <h3>未排期事项</h3>
-              {unscheduledItems.map((item) => (
-                <div key={item.id}>
-                  <strong>{item.title}</strong>
-                  <span>{item.kind === "task" ? "开发任务" : "缺陷修复"} · {label(item.status)} · 优先级分数 {item.priorityScore}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
         </div>
         {message ? <p className="gantt-message">{message}</p> : null}
-      </aside>
+      </>
+  );
+
+  return (
+    <div className={embedded ? "gantt-embedded" : "gantt-backdrop"}>
+      {embedded ? content : <aside className="gantt-modal">{content}</aside>}
+      {hoverTip ? (
+        <div className={`gantt-hover-popover ${hoverTip.placement}`} style={{ left: hoverTip.x, top: hoverTip.y }}>
+          {hoverTip.content}
+        </div>
+      ) : null}
     </div>
   );
 }

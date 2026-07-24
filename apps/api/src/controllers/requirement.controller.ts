@@ -29,6 +29,11 @@ export class RequirementController {
     return this.core.reviewRequirement(req.user, toInt(id)!, body);
   }
 
+  @Post(":id/acceptance")
+  acceptance(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
+    return this.core.acceptRequirement(req.user, toInt(id)!, body);
+  }
+
   @Post(":id/changes")
   change(@Req() req: AuthedRequest, @Param("id") id: string, @Body() body: any) {
     return this.core.createRequirementChange(req.user, toInt(id)!, body);

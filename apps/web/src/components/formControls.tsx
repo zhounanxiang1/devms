@@ -1,8 +1,8 @@
-import { useRef, useState, type ChangeEvent } from "react";
+import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Person, Project } from "../types";
 
 export function ProjectSelect({ projects, defaultValue }: { projects: Project[]; defaultValue?: string | number | null }) {
-  return <Select name="projectId" label="所属项目" defaultValue={defaultValue} options={projects.map((project) => [String(project.id), project.name])} />;
+  return <Select searchable name="projectId" label="所属项目" defaultValue={defaultValue} options={projects.map((project) => [String(project.id), `${project.name}（${project.code}）`])} />;
 }
 
 export function PeopleSelect({
@@ -14,11 +14,11 @@ export function PeopleSelect({
 }: {
   name: string;
   label: string;
-  people: Array<Pick<Person, "id" | "name">>;
+  people: Array<Pick<Person, "id" | "name"> & { employeeNo?: string | null }>;
   defaultValue?: string | number | null;
   required?: boolean;
 }) {
-  return <Select name={name} label={text} required={required} defaultValue={defaultValue} options={[["", "未指定"], ...people.map((person) => [String(person.id), person.name] as [string, string])]} />;
+  return <Select searchable name={name} label={text} required={required} defaultValue={defaultValue} options={[["", "未指定"], ...people.map((person) => [String(person.id), `${person.name}${person.employeeNo ? `（${person.employeeNo}）` : ""}`] as [string, string])]} />;
 }
 
 export function Field({
@@ -159,6 +159,7 @@ export function Select({
   value,
   disabled,
   required,
+  searchable,
   onChange
 }: {
   name: string;
@@ -168,8 +169,23 @@ export function Select({
   value?: string | number | null;
   disabled?: boolean;
   required?: boolean;
+  searchable?: boolean;
   onChange?: (value: string) => void;
 }) {
+  if (searchable) {
+    return (
+      <SearchableSelect
+        name={name}
+        label={text}
+        options={options}
+        defaultValue={defaultValue}
+        value={value}
+        disabled={disabled}
+        required={required}
+        onChange={onChange}
+      />
+    );
+  }
   const selectProps = value === undefined ? { defaultValue: defaultValue ?? "" } : { value: value ?? "" };
   return (
     <label className={required ? "field required" : "field"}>
@@ -183,7 +199,109 @@ export function Select({
   );
 }
 
-export function MultiSelect({ name, label: text, options, defaultValue }: { name: string; label: string; options: Array<[string, string]>; defaultValue?: string[] }) {
+function SearchableSelect({
+  name,
+  label: text,
+  options,
+  defaultValue,
+  value,
+  disabled,
+  required,
+  onChange
+}: {
+  name: string;
+  label: string;
+  options: Array<[string, string]>;
+  defaultValue?: string | number | null;
+  value?: string | number | null;
+  disabled?: boolean;
+  required?: boolean;
+  onChange?: (value: string) => void;
+}) {
+  const controlled = value !== undefined;
+  const [innerValue, setInnerValue] = useState(String(defaultValue ?? ""));
+  const selectedValue = String((controlled ? value : innerValue) ?? "");
+  const selectedLabel = options.find(([optionValue]) => optionValue === selectedValue)?.[1] || "";
+  const [query, setQuery] = useState(selectedLabel);
+  const [open, setOpen] = useState(false);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = useMemo(() => {
+    if (!normalizedQuery) return options;
+    return options.filter(([optionValue, optionLabel]) => `${optionLabel} ${optionValue}`.toLowerCase().includes(normalizedQuery));
+  }, [normalizedQuery, options]);
+
+  function commit(nextValue: string) {
+    if (!controlled) setInnerValue(nextValue);
+    const nextLabel = options.find(([optionValue]) => optionValue === nextValue)?.[1] || "";
+    setQuery(nextLabel);
+    setOpen(false);
+    onChange?.(nextValue);
+  }
+
+  return (
+    <label className={required ? "field required searchable-field" : "field searchable-field"}>
+      <span className="field-label">{text}{required ? <span className="required-mark">必填</span> : null}</span>
+      <input type="hidden" name={name} value={selectedValue} />
+      {required ? <input type="hidden" name={`${name}__required`} value={text} /> : null}
+      <div className="searchable-select">
+        <input
+          type="text"
+          value={open ? query : selectedLabel}
+          disabled={disabled}
+          required={required && !selectedValue}
+          placeholder="输入关键词查询"
+          autoComplete="off"
+          onFocus={() => {
+            setQuery("");
+            setOpen(true);
+          }}
+          onChange={(event) => {
+            setQuery(event.currentTarget.value);
+            setOpen(true);
+          }}
+          onBlur={() => {
+            setOpen(false);
+            setQuery(selectedLabel);
+          }}
+        />
+        {open && !disabled ? (
+          <div className="searchable-select-list">
+            {filteredOptions.length ? filteredOptions.map(([optionValue, optionLabel]) => (
+              <button
+                key={`${optionValue}-${optionLabel}`}
+                type="button"
+                className={optionValue === selectedValue ? "selected" : ""}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  commit(optionValue);
+                }}
+              >
+                {optionLabel}
+              </button>
+            )) : (
+              <span className="searchable-empty">没有匹配的数据</span>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </label>
+  );
+}
+
+export function MultiSelect({
+  name,
+  label: text,
+  options,
+  defaultValue,
+  searchable
+}: {
+  name: string;
+  label: string;
+  options: Array<[string, string]>;
+  defaultValue?: string[];
+  searchable?: boolean;
+}) {
+  if (searchable) return <SearchableMultiSelect name={name} label={text} options={options} defaultValue={defaultValue} />;
   return (
     <label className="field">
       <span className="field-label">{text}</span>
@@ -192,6 +310,46 @@ export function MultiSelect({ name, label: text, options, defaultValue }: { name
           <option key={`${value}-${name}`} value={value}>{name}</option>
         ))}
       </select>
+    </label>
+  );
+}
+
+function SearchableMultiSelect({ name, label: text, options, defaultValue }: { name: string; label: string; options: Array<[string, string]>; defaultValue?: string[] }) {
+  const [selectedValues, setSelectedValues] = useState<string[]>(defaultValue || []);
+  const [query, setQuery] = useState("");
+  const selectedSet = useMemo(() => new Set(selectedValues), [selectedValues]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = useMemo(() => {
+    if (!normalizedQuery) return options;
+    return options.filter(([optionValue, optionLabel]) => `${optionLabel} ${optionValue}`.toLowerCase().includes(normalizedQuery));
+  }, [normalizedQuery, options]);
+
+  function toggle(optionValue: string) {
+    setSelectedValues((current) => current.includes(optionValue) ? current.filter((value) => value !== optionValue) : [...current, optionValue]);
+  }
+
+  return (
+    <label className="field searchable-field">
+      <span className="field-label">{text}</span>
+      <div className="searchable-multi">
+        <input type="text" value={query} placeholder="输入关键词查询" onChange={(event) => setQuery(event.currentTarget.value)} />
+        <div className="searchable-multi-list">
+          {filteredOptions.length ? filteredOptions.map(([optionValue, optionLabel]) => (
+            <button
+              key={`${optionValue}-${optionLabel}`}
+              type="button"
+              className={selectedSet.has(optionValue) ? "selected" : ""}
+              onClick={() => toggle(optionValue)}
+            >
+              <span>{selectedSet.has(optionValue) ? "已选" : "选择"}</span>
+              {optionLabel}
+            </button>
+          )) : (
+            <span className="searchable-empty">没有匹配的数据</span>
+          )}
+        </div>
+      </div>
+      {selectedValues.map((selectedValue) => <input key={selectedValue} type="hidden" name={name} value={selectedValue} />)}
     </label>
   );
 }
