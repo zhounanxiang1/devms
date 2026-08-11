@@ -1,10 +1,13 @@
 import { ReactNode } from "react";
 
-export function Metric({ label, value, tone }: { label: string; value: number; tone?: "warn" }) {
+export function Metric({ label, value, total, tone }: { label: string; value: number; total?: number; tone?: "warn" }) {
   return (
     <div className={`metric ${tone || ""}`}>
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong>
+        {value}
+        {typeof total === "number" ? <span className="metric-total">/{total}</span> : null}
+      </strong>
     </div>
   );
 }

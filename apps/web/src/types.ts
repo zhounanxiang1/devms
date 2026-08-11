@@ -97,6 +97,19 @@ export type ProjectDocument = {
   updatedAt?: string;
 };
 
+export type RequirementSupplement = {
+  id: number;
+  requirementId: number;
+  type?: string | null;
+  title?: string | null;
+  reason?: string | null;
+  content?: string | null;
+  impactScope?: string | null;
+  createdBy?: Person | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type Requirement = {
   id: number;
   code: string;
@@ -126,6 +139,7 @@ export type Requirement = {
   uiAcceptedAt?: string | null;
   uiAcceptor?: Person;
   documents?: { document: ProjectDocument }[];
+  supplements?: RequirementSupplement[];
   createdAt?: string;
   updatedAt?: string;
 };
@@ -232,6 +246,18 @@ export type ActivityLog = {
   version?: ReleaseVersion | null;
 };
 
+export type BoardRuleConfig = {
+  id: number;
+  dueSoonDays: number;
+  normalLoadLimit: number;
+  saturatedLoadLimit: number;
+  staleProjectDays: number;
+  highPriorityThreshold: number;
+  includeClosedItems: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type AdminData = {
   positions: Position[];
   organizations: Organization[];
@@ -240,5 +266,6 @@ export type AdminData = {
   dictionaries: Array<{ id: number; type: string; code: string; name: string; description?: string | null; isSystem?: boolean; isActive: boolean; sort?: number }>;
   requirementPriorities: Array<{ id: number; code: string; name: string; description?: string | null; baseScore: number; defectWeight: number; isActive?: boolean; sort?: number }>;
   defectPriorities: Array<{ id: number; code: string; name: string; description?: string | null; onlineScore: number; offlineScore: number; isActive?: boolean; sort?: number }>;
+  boardRuleConfig: BoardRuleConfig;
   logs: ActivityLog[];
 };

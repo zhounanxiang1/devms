@@ -128,6 +128,7 @@ model Person {
   submittedReqs     Requirement[]    @relation("RequirementSubmitter")
   pmAcceptedReqs    Requirement[]    @relation("RequirementPmAcceptor")
   uiAcceptedReqs    Requirement[]    @relation("RequirementUiAcceptor")
+  requirementSupplements RequirementSupplement[] @relation("RequirementSupplementCreator")
   tasks             DevTask[]        @relation("TaskAssignee")
   createdTasks      DevTask[]        @relation("TaskCreator")
   testingTasks      DevTask[]        @relation("TaskTester")
@@ -214,6 +215,18 @@ model DefectPriority {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model BoardRuleConfig {
+  id                    Int      @id
+  dueSoonDays           Int      @default(2)
+  normalLoadLimit       Int      @default(5)
+  saturatedLoadLimit    Int      @default(10)
+  staleProjectDays      Int      @default(7)
+  highPriorityThreshold Float    @default(40)
+  includeClosedItems    Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
 
 model CodeSequence {
@@ -332,10 +345,29 @@ model Requirement {
   optimizationSourceId Int?
   optimizations      Requirement[]       @relation("RequirementOptimizations")
   documents          RequirementDocument[]
+  supplements        RequirementSupplement[]
   versionLinks       VersionRequirement[]
   logs               ActivityLog[]
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
+}
+
+model RequirementSupplement {
+  id            Int          @id @default(autoincrement())
+  requirementId Int
+  type          String?
+  title         String?
+  reason        String?      @db.Text
+  content       String?      @db.Text
+  impactScope   String?      @db.Text
+  createdById   Int?
+  requirement   Requirement  @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  createdBy     Person?      @relation("RequirementSupplementCreator", fields: [createdById], references: [id])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([requirementId])
+  @@index([createdById])
 }
 
 model RequirementChange {

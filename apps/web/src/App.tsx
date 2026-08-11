@@ -13,9 +13,10 @@ import {
   Trash2,
   Users
 } from "lucide-react";
-import { Avatar, Button as AntButton, Card, Collapse as AntCollapse, Descriptions, Dropdown as AntDropdown, Empty as AntEmpty, Input as AntInput, InputNumber as AntInputNumber, Menu as AntMenu, Modal as AntModal, Select as AntSelect, Space, Tabs as AntTabs, Tag } from "antd";
+import { Avatar, Button as AntButton, Card, Collapse as AntCollapse, DatePicker as AntDatePicker, Descriptions, Dropdown as AntDropdown, Empty as AntEmpty, Input as AntInput, InputNumber as AntInputNumber, Menu as AntMenu, Modal as AntModal, Select as AntSelect, Space, Tabs as AntTabs, Tag, Timeline as AntTimeline } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Children, FormEvent, isValidElement, MouseEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { Children, FormEvent, isValidElement, lazy, MouseEvent, ReactNode, Suspense, useEffect, useMemo, useState } from "react";
+import type { ComponentType } from "react";
 import { api, clearToken, getToken, patch, post, setToken } from "./api";
 import { AssigneeScheduleDialog, ScheduleChange } from "./components/AssigneeScheduleDialog";
 import { Badge, EmptyState, ListSection, Metric } from "./components/common";
@@ -29,12 +30,12 @@ import { clearFormDraft, draftArray, draftValue, FORM_DRAFT_PREFIX, hasDraftValu
 import { dictionaryOptions, dictionaryTypeLabel, dictionaryTypeUsage, fmtDate, isDue, isProductManagerPerson, label, projectStageLabel, toDateInput, todayDateInput } from "./lib/format";
 import { dictionaryTypeMeta } from "./lib/labels";
 import { stripRichText } from "./lib/richText";
-import { Account, AdminData, AuthState, Defect, DevTask, Organization, Person, Position, Project, ReleaseVersion, Requirement } from "./types";
+import { Account, AdminData, AuthState, BoardRuleConfig, Defect, DevTask, Organization, Person, Position, Project, ReleaseVersion, Requirement, RequirementSupplement } from "./types";
 
-type View = "workbench" | "projects" | "admin";
+type View = "workbench" | "dashboard" | "projects" | "admin";
 type DrawerKind = "project" | "requirement" | "task" | "defect" | "version" | "document" | "person" | null;
 type DrawerContext = { projectId?: number; requirementId?: number; taskId?: number; editProjectId?: number; revisionMode?: "CHANGE" | "OPTIMIZATION" };
-type AdminEditKind = "personAccount" | "organization" | "position" | "dictionary" | "requirementPriority" | "defectPriority";
+type AdminEditKind = "personAccount" | "organization" | "position" | "dictionary" | "requirementPriority" | "defectPriority" | "boardRuleConfig";
 type AdminEditState = { kind: AdminEditKind; item?: any } | null;
 type RefreshTarget = "all" | "workbench" | "project" | "execution" | "release" | "admin";
 type TaskCompleteState = { task: DevTask; refreshTarget: RefreshTarget } | null;
@@ -42,8 +43,23 @@ type TaskCompleteState = { task: DevTask; refreshTarget: RefreshTarget } | null;
 const QUALITY_POSITIONS = ["PRODUCT_MANAGER", "TEST"];
 const TASK_CREATOR_POSITIONS = ["PRODUCT_MANAGER", "UI", "FRONTEND", "BACKEND", "DATA", "OPS"];
 const TERMINAL_VERSION_STATUSES = ["RELEASED", "ROLLED_BACK", "CANCELED"];
+const REQUIREMENT_SUPPLEMENT_ALLOWED_STATUSES = ["TO_REVIEW", "APPROVED", "REJECTED", "NEEDS_SUPPLEMENT", "DEFERRED", "DEVELOPING"];
 const TASK_OWNER_EDITABLE_STATUSES = ["TODO", "DOING"];
 const DEFECT_OWNER_EDITABLE_STATUSES = ["TO_FIX", "FIXING"];
+const DEFAULT_BOARD_RULE_CONFIG: BoardRuleConfig = {
+  id: 1,
+  dueSoonDays: 2,
+  normalLoadLimit: 5,
+  saturatedLoadLimit: 10,
+  staleProjectDays: 7,
+  highPriorityThreshold: 40,
+  includeClosedItems: false
+};
+const TASK_UNFINISHED_STATUSES = ["TODO", "DOING", "TO_TEST", "TESTING"];
+const TASK_COMPLETED_STATUSES = ["TEST_PASSED"];
+const DEFECT_UNFINISHED_STATUSES = ["TO_FIX", "FIXING", "FIXED"];
+const DEFECT_COMPLETED_STATUSES = ["VERIFIED"];
+const CLOSED_STATUSES = ["CLOSED"];
 
 function hasAnyPositionCode(positions: string[] = [], allowed: string[]) {
   return allowed.some((code) => positions.includes(code));
@@ -145,12 +161,14 @@ export function App() {
   const [adminEdit, setAdminEdit] = useState<AdminEditState>(null);
   const [reviewTarget, setReviewTarget] = useState<Requirement | null>(null);
   const [acceptanceTarget, setAcceptanceTarget] = useState<Requirement | null>(null);
+  const [supplementTarget, setSupplementTarget] = useState<Requirement | null>(null);
   const [scheduleEdit, setScheduleEdit] = useState<ScheduleEditState | null>(null);
   const [projectLifecycle, setProjectLifecycle] = useState<{ project: Project; action: ProjectLifecycleAction } | null>(null);
   const [defectDetail, setDefectDetail] = useState<Defect | null>(null);
   const [requirementDetail, setRequirementDetail] = useState<Requirement | null>(null);
   const [taskDetail, setTaskDetail] = useState<DevTask | null>(null);
   const [taskComplete, setTaskComplete] = useState<TaskCompleteState>(null);
+  const [dashboardSchedulePerson, setDashboardSchedulePerson] = useState<Person | null>(null);
   const [accountCenterOpen, setAccountCenterOpen] = useState(false);
 
   const userPositions = auth?.user.positions || [];
@@ -439,6 +457,7 @@ export function App() {
 
   const nav = [
     ["workbench", "工作台", LayoutDashboard],
+    ...(isProductManager ? ([["dashboard", "全局看板", PackageCheck]] as const) : []),
     ["projects", "项目管理", Archive],
     ...(isProductManager ? ([["admin", "后台管理", Settings]] as const) : [])
   ] as const;
@@ -447,6 +466,7 @@ export function App() {
   const accountMenuItems = [
     { key: "profile", label: "个人中心" },
     { key: "workbench", label: "我的工作台" },
+    ...(isProductManager ? [{ key: "dashboard", label: "全局看板" }] : []),
     ...(isProductManager ? [{ key: "admin", label: "后台管理" }] : []),
     { type: "divider" as const },
     { key: "logout", label: "退出登录", danger: true }
@@ -459,6 +479,7 @@ export function App() {
   const currentNavTitle = nav.find(([id]) => id === view)?.[1] || "工作台";
   const currentModuleHint = (() => {
     if (view === "workbench") return "个人事项、待办和排期处理";
+    if (view === "dashboard") return "项目、人员、风险和交付趋势总览";
     if (view === "projects") return "项目概览、需求、缺陷、版本和资料";
     return "组织、人员和规则配置";
   })();
@@ -525,6 +546,7 @@ export function App() {
               onClick: ({ key }) => {
                 if (key === "profile") setAccountCenterOpen(true);
                 if (key === "workbench") setView("workbench");
+                if (key === "dashboard") setView("dashboard");
                 if (key === "admin") setView("admin");
                 if (key === "logout") logout();
               }
@@ -576,6 +598,25 @@ export function App() {
           />
         ) : null}
 
+        {view === "dashboard" && isProductManager ? (
+          <GlobalDashboard
+            projects={projects}
+            requirements={requirements}
+            tasks={tasks}
+            defects={defects}
+            people={availablePeople}
+            positions={availablePositions}
+            boardRuleConfig={admin?.boardRuleConfig}
+            onOpenProject={(projectId) => {
+              setSelectedProjectId(projectId);
+              setView("projects");
+            }}
+            onViewTask={openTaskFromWorkbench}
+            onViewDefect={openDefectFromWorkbench}
+            onViewPersonSchedule={setDashboardSchedulePerson}
+          />
+        ) : null}
+
         {view === "projects" ? (
           <ProjectManagement
             projects={projects}
@@ -599,6 +640,7 @@ export function App() {
             onReopenDefect={(defect) => handleAction(() => post(`/defects/${defect.id}/reopen`, { reason: "重新开启" }), "project")}
             onReviewRequirement={setReviewTarget}
             onAcceptRequirement={setAcceptanceTarget}
+            onSupplementRequirement={setSupplementTarget}
             onViewRequirement={setRequirementDetail}
             onProjectLifecycle={(project, action) => setProjectLifecycle({ project, action })}
             canTest={canTest}
@@ -654,6 +696,16 @@ export function App() {
         }}
       />
 
+      <RequirementSupplementDialog
+        requirement={supplementTarget}
+        onClose={() => setSupplementTarget(null)}
+        onSubmit={async (requirement, body) => {
+          const success = await handleAction(() => post(`/requirements/${requirement.id}/supplements`, body), "project");
+          if (success) setSupplementTarget(null);
+          return success;
+        }}
+      />
+
       <ScheduleDialog
         state={scheduleEdit}
         onClose={() => setScheduleEdit(null)}
@@ -699,6 +751,18 @@ export function App() {
         }}
         onLogout={logout}
       />
+
+      {dashboardSchedulePerson ? (
+        <AssigneeScheduleDialog
+          assigneeId={dashboardSchedulePerson.id}
+          assigneeName={dashboardSchedulePerson.name}
+          currentPersonId={auth.user.personId}
+          tasks={tasks.filter((task) => String(task.assigneeId || task.assignee?.id) === String(dashboardSchedulePerson.id))}
+          defects={defects.filter((defect) => String(defect.assigneeId || defect.assignee?.id) === String(dashboardSchedulePerson.id))}
+          onClose={() => setDashboardSchedulePerson(null)}
+          onSaveChanges={saveScheduleChanges}
+        />
+      ) : null}
 
       <CreateDrawer
         kind={drawer}
@@ -869,6 +933,15 @@ const REQUIREMENT_TYPE_OPTIONS = [
   { value: "UX", label: "体验优化" },
   { value: "NON_FUNCTIONAL", label: "非功能需求" }
 ];
+const REQUIREMENT_SUPPLEMENT_TYPE_OPTIONS = [
+  { value: "DETAIL", label: "内容补充" },
+  { value: "BUSINESS_RULE", label: "业务规则补充" },
+  { value: "BOUNDARY", label: "边界条件补充" },
+  { value: "DATA_SCOPE", label: "数据口径补充" },
+  { value: "ACCEPTANCE", label: "验收口径补充" },
+  { value: "RISK", label: "风险说明补充" },
+  { value: "OTHER", label: "其他补充" }
+];
 const REQUIREMENT_PRIORITY_OPTIONS = ["P0", "P1", "P2", "P3", "P4"].map((value) => ({ value, label: value }));
 const TASK_STATUS_OPTIONS = ["TODO", "DOING", "TO_TEST", "TESTING", "TEST_PASSED", "CLOSED"].map((value) => ({ value, label: label(value) }));
 const TASK_TYPE_OPTIONS = ["PRODUCT_MANAGER", "UI", "FRONTEND", "BACKEND", "DATA", "TEST", "OPS", "BUSINESS"].map((value) => ({ value, label: label(value) }));
@@ -949,6 +1022,10 @@ function uniqueOptions<T>(items: T[], reader: (item: T) => unknown, labeler: (va
   return Array.from(values.entries()).map(([value, label]) => ({ value, label }));
 }
 
+function requirementSupplementTypeLabel(value?: string | null) {
+  return REQUIREMENT_SUPPLEMENT_TYPE_OPTIONS.find((item) => item.value === value)?.label || label(value || "DETAIL");
+}
+
 function compareText<T>(reader: (item: T) => unknown) {
   return (left: T, right: T) => String(reader(left) || "").localeCompare(String(reader(right) || ""), "zh-CN");
 }
@@ -963,6 +1040,686 @@ function compareDate<T>(reader: (item: T) => unknown) {
     const rightTime = reader(right) ? new Date(String(reader(right))).getTime() : 0;
     return leftTime - rightTime;
   };
+}
+
+type DashboardStatusRange = "ALL" | "UNFINISHED" | "COMPLETED" | "CLOSED";
+type DashboardItemType = "ALL" | "TASK" | "DEFECT";
+type DashboardHealth = "NORMAL" | "WATCH" | "RISK" | "STALE";
+type DashboardLoad = "IDLE" | "NORMAL" | "SATURATED" | "OVERLOADED";
+
+type DashboardWorkItem = {
+  key: string;
+  itemType: Exclude<DashboardItemType, "ALL">;
+  rawTask?: DevTask;
+  rawDefect?: Defect;
+  id: number;
+  code: string;
+  title: string;
+  typeLabel: string;
+  status: string;
+  projectId?: number;
+  projectName: string;
+  requirementName: string;
+  taskName: string;
+  assigneeId?: number | null;
+  assigneeName: string;
+  testerId?: number | null;
+  testerName: string;
+  assigneePositionCode?: string;
+  testerPositionCode?: string;
+  priorityScore: number;
+  plannedStartDate?: string | null;
+  plannedFinishDate?: string | null;
+  actualFinishDate?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  isUnfinished: boolean;
+  isCompleted: boolean;
+  isClosed: boolean;
+};
+
+type DashboardProjectRow = {
+  key: number;
+  project: Project;
+  requirementCount: number;
+  taskCount: number;
+  defectCount: number;
+  unfinishedCount: number;
+  dueSoonCount: number;
+  overdueCount: number;
+  highestPriorityScore: number;
+  health: DashboardHealth;
+  lastUpdatedAt?: string | null;
+};
+
+type DashboardPersonRow = {
+  key: number;
+  person: Person;
+  developerUnfinishedCount: number;
+  testerUnfinishedCount: number;
+  taskCount: number;
+  defectCount: number;
+  waitingTestCount: number;
+  dueSoonCount: number;
+  overdueCount: number;
+  highestPriorityScore: number;
+  load: DashboardLoad;
+  latestCompletedAt?: string | null;
+};
+
+const DASHBOARD_STATUS_RANGE_OPTIONS: Array<{ value: DashboardStatusRange; label: string }> = [
+  { value: "ALL", label: "全部状态" },
+  { value: "UNFINISHED", label: "未完成" },
+  { value: "COMPLETED", label: "已完成" },
+  { value: "CLOSED", label: "已关闭" }
+];
+const DASHBOARD_ITEM_TYPE_OPTIONS: Array<{ value: DashboardItemType; label: string }> = [
+  { value: "ALL", label: "全部事项" },
+  { value: "TASK", label: "开发任务" },
+  { value: "DEFECT", label: "缺陷修复" }
+];
+const DASHBOARD_HEALTH_LABELS: Record<DashboardHealth, string> = {
+  NORMAL: "正常",
+  WATCH: "关注",
+  RISK: "风险",
+  STALE: "停滞"
+};
+const DASHBOARD_LOAD_LABELS: Record<DashboardLoad, string> = {
+  IDLE: "空闲",
+  NORMAL: "正常",
+  SATURATED: "饱和",
+  OVERLOADED: "超载"
+};
+const DashboardPie = lazy(async (): Promise<{ default: ComponentType<any> }> => {
+  const charts = await import("@ant-design/charts");
+  return { default: charts.Pie as any };
+});
+const DashboardColumn = lazy(async (): Promise<{ default: ComponentType<any> }> => {
+  const charts = await import("@ant-design/charts");
+  return { default: charts.Column as any };
+});
+const DashboardLine = lazy(async (): Promise<{ default: ComponentType<any> }> => {
+  const charts = await import("@ant-design/charts");
+  return { default: charts.Line as any };
+});
+
+function personPrimaryPositionLabel(person?: Person | null) {
+  return personPrimaryPositionName(person) || label(personPrimaryPositionCode(person)) || "-";
+}
+
+function itemAssigneeId(item: { assigneeId?: number | null; assignee?: Person }) {
+  return item.assigneeId ?? item.assignee?.id ?? null;
+}
+
+function itemTesterId(item: { testerId?: number | null; tester?: Person }) {
+  return item.testerId ?? item.tester?.id ?? null;
+}
+
+function dateOnly(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function dateTimeValue(value?: string | null) {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function todayOnly() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function daysFromToday(value?: string | null) {
+  const date = dateOnly(value);
+  if (!date) return null;
+  return Math.ceil((date.getTime() - todayOnly().getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function dashboardDateInRange(value: unknown, range: DateRangeValue) {
+  if (!range?.[0] || !range?.[1]) return true;
+  if (!value) return false;
+  const current = dateOnly(String(value))?.getTime();
+  if (!current) return false;
+  const start = typeof range[0]?.startOf === "function" ? range[0].startOf("day").valueOf() : dateOnly(String(range[0]))?.getTime();
+  const end = typeof range[1]?.endOf === "function" ? range[1].endOf("day").valueOf() : dateOnly(String(range[1]))?.getTime();
+  return Boolean(start && end && current >= start && current <= end);
+}
+
+function dashboardDateKey(value?: string | null) {
+  const date = dateOnly(value);
+  if (!date) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function lastDateKeys(days: number) {
+  const today = todayOnly();
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (days - 1 - index));
+    return dashboardDateKey(date.toISOString());
+  });
+}
+
+function isTaskUnfinished(status?: string) {
+  return TASK_UNFINISHED_STATUSES.includes(String(status || ""));
+}
+
+function isTaskCompleted(status?: string) {
+  return TASK_COMPLETED_STATUSES.includes(String(status || ""));
+}
+
+function isDefectUnfinished(status?: string) {
+  return DEFECT_UNFINISHED_STATUSES.includes(String(status || ""));
+}
+
+function isDefectCompleted(status?: string) {
+  return DEFECT_COMPLETED_STATUSES.includes(String(status || ""));
+}
+
+function buildDashboardItems(tasks: DevTask[], defects: Defect[]): DashboardWorkItem[] {
+  return [
+    ...tasks.map((task) => {
+      const assigneeId = itemAssigneeId(task);
+      const testerId = itemTesterId(task);
+      return {
+        key: `TASK-${task.id}`,
+        itemType: "TASK" as const,
+        rawTask: task,
+        id: task.id,
+        code: task.code,
+        title: task.title,
+        typeLabel: "开发任务",
+        status: task.status,
+        projectId: task.project?.id || task.requirement?.projectId,
+        projectName: task.project?.name || task.requirement?.project?.name || "-",
+        requirementName: task.requirement?.title || "-",
+        taskName: "-",
+        assigneeId,
+        assigneeName: task.assignee?.name || "-",
+        testerId,
+        testerName: task.tester?.name || "-",
+        assigneePositionCode: personPrimaryPositionCode(task.assignee),
+        testerPositionCode: personPrimaryPositionCode(task.tester),
+        priorityScore: task.priorityScore || 0,
+        plannedStartDate: task.plannedStartDate,
+        plannedFinishDate: task.plannedFinishDate,
+        actualFinishDate: task.actualFinishDate || (isTaskCompleted(task.status) ? task.updatedAt : null),
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        isUnfinished: isTaskUnfinished(task.status),
+        isCompleted: isTaskCompleted(task.status),
+        isClosed: CLOSED_STATUSES.includes(task.status)
+      };
+    }),
+    ...defects.map((defect) => {
+      const assigneeId = itemAssigneeId(defect);
+      const testerId = itemTesterId(defect);
+      return {
+        key: `DEFECT-${defect.id}`,
+        itemType: "DEFECT" as const,
+        rawDefect: defect,
+        id: defect.id,
+        code: defect.code,
+        title: defect.title,
+        typeLabel: "缺陷修复",
+        status: defect.status,
+        projectId: defect.project?.id || defect.task?.project?.id || defect.task?.requirement?.projectId,
+        projectName: defect.project?.name || defect.task?.project?.name || defect.task?.requirement?.project?.name || "-",
+        requirementName: defect.task?.requirement?.title || defect.requirement?.title || "-",
+        taskName: defect.task?.title || "-",
+        assigneeId,
+        assigneeName: defect.assignee?.name || "-",
+        testerId,
+        testerName: defect.tester?.name || "-",
+        assigneePositionCode: personPrimaryPositionCode(defect.assignee),
+        testerPositionCode: personPrimaryPositionCode(defect.tester),
+        priorityScore: defect.priorityScore || 0,
+        plannedStartDate: defect.plannedStartDate || defect.plannedFixDate,
+        plannedFinishDate: defect.plannedFinishDate || defect.plannedFixDate,
+        actualFinishDate: defect.actualFixDate || (isDefectCompleted(defect.status) ? defect.updatedAt : null),
+        createdAt: defect.createdAt,
+        updatedAt: defect.updatedAt,
+        isUnfinished: isDefectUnfinished(defect.status),
+        isCompleted: isDefectCompleted(defect.status),
+        isClosed: CLOSED_STATUSES.includes(defect.status)
+      };
+    })
+  ];
+}
+
+function itemMatchesStatusRange(item: DashboardWorkItem, range: DashboardStatusRange, includeClosedItems: boolean) {
+  if (range === "UNFINISHED") return item.isUnfinished;
+  if (range === "COMPLETED") return item.isCompleted;
+  if (range === "CLOSED") return item.isClosed;
+  return includeClosedItems || !item.isClosed;
+}
+
+function isDashboardItemOverdue(item: DashboardWorkItem) {
+  const days = daysFromToday(item.plannedFinishDate);
+  return item.isUnfinished && days !== null && days < 0;
+}
+
+function isDashboardItemDueSoon(item: DashboardWorkItem, dueSoonDays: number) {
+  const days = daysFromToday(item.plannedFinishDate);
+  return item.isUnfinished && days !== null && days >= 0 && days <= dueSoonDays;
+}
+
+function isDashboardItemStale(item: DashboardWorkItem, staleProjectDays: number) {
+  if (!item.isUnfinished || !item.updatedAt) return false;
+  const updated = dateOnly(item.updatedAt);
+  if (!updated) return false;
+  return Math.floor((todayOnly().getTime() - updated.getTime()) / (24 * 60 * 60 * 1000)) >= staleProjectDays;
+}
+
+function dashboardRiskReasons(item: DashboardWorkItem, config: BoardRuleConfig) {
+  const reasons: string[] = [];
+  if (isDashboardItemOverdue(item)) reasons.push("超期");
+  if (isDashboardItemDueSoon(item, config.dueSoonDays)) reasons.push("临期");
+  if (item.isUnfinished && item.priorityScore >= config.highPriorityThreshold) reasons.push("高优先级");
+  if (isDashboardItemStale(item, config.staleProjectDays)) reasons.push("长时间未更新");
+  if (item.rawDefect?.level === "L1" && item.isUnfinished) reasons.push("阻塞缺陷");
+  if (item.rawDefect?.level === "L2" && item.isUnfinished) reasons.push("严重缺陷");
+  return reasons;
+}
+
+function projectHealth(projectItems: DashboardWorkItem[], config: BoardRuleConfig): DashboardHealth {
+  if (projectItems.some((item) => isDashboardItemOverdue(item) || (item.rawDefect?.level === "L1" && item.isUnfinished))) return "RISK";
+  if (projectItems.length && projectItems.every((item) => !item.isUnfinished || isDashboardItemStale(item, config.staleProjectDays))) return "STALE";
+  if (projectItems.some((item) => isDashboardItemDueSoon(item, config.dueSoonDays) || (item.rawDefect?.level === "L2" && item.isUnfinished))) return "WATCH";
+  return "NORMAL";
+}
+
+function personLoadStatus(totalUnfinished: number, _overdueCount: number, config: BoardRuleConfig): DashboardLoad {
+  if (totalUnfinished <= 0) return "IDLE";
+  if (totalUnfinished > config.saturatedLoadLimit) return "OVERLOADED";
+  if (totalUnfinished > config.normalLoadLimit) return "SATURATED";
+  return "NORMAL";
+}
+
+function DashboardHealthTag({ value }: { value: DashboardHealth }) {
+  const color = value === "RISK" ? "red" : value === "WATCH" ? "gold" : value === "STALE" ? "purple" : "green";
+  return <Tag color={color}>{DASHBOARD_HEALTH_LABELS[value]}</Tag>;
+}
+
+function DashboardLoadTag({ value }: { value: DashboardLoad }) {
+  const color = value === "OVERLOADED" ? "red" : value === "SATURATED" ? "gold" : value === "IDLE" ? "default" : "green";
+  return <Tag color={color}>{DASHBOARD_LOAD_LABELS[value]}</Tag>;
+}
+
+function ChartCard({ title, dataLength, children }: { title: string; dataLength: number; children: ReactNode }) {
+  return (
+    <Card className="enterprise-card dashboard-chart-card" title={title}>
+      {dataLength ? children : <AntEmpty image={AntEmpty.PRESENTED_IMAGE_SIMPLE} description="暂无图表数据" />}
+    </Card>
+  );
+}
+
+function GlobalDashboard({
+  projects,
+  requirements,
+  tasks,
+  defects,
+  people,
+  positions,
+  boardRuleConfig,
+  onOpenProject,
+  onViewTask,
+  onViewDefect,
+  onViewPersonSchedule
+}: {
+  projects: Project[];
+  requirements: Requirement[];
+  tasks: DevTask[];
+  defects: Defect[];
+  people: Person[];
+  positions: Array<Pick<Position, "code" | "name" | "isActive">>;
+  boardRuleConfig?: BoardRuleConfig | null;
+  onOpenProject: (projectId: number) => void;
+  onViewTask: (task: DevTask) => void;
+  onViewDefect: (defect: Defect) => void;
+  onViewPersonSchedule: (person: Person) => void;
+}) {
+  const config = boardRuleConfig || DEFAULT_BOARD_RULE_CONFIG;
+  const [activeTab, setActiveTab] = useState("overview");
+  const [projectFilter, setProjectFilter] = useState<string[]>([]);
+  const [plannedRange, setPlannedRange] = useState<DateRangeValue>(null);
+  const [itemTypeFilter, setItemTypeFilter] = useState<DashboardItemType>("ALL");
+  const [statusRangeFilter, setStatusRangeFilter] = useState<DashboardStatusRange>("ALL");
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
+  const [testerFilter, setTesterFilter] = useState<string[]>([]);
+  const [positionFilter, setPositionFilter] = useState<string[]>([]);
+  const [scheduleProject, setScheduleProject] = useState<Project | null>(null);
+  const [riskSearchField, setRiskSearchField] = useState("title");
+  const [riskKeyword, setRiskKeyword] = useState("");
+  const [riskDateRange, setRiskDateRange] = useState<DateRangeValue>(null);
+
+  const dashboardItems = useMemo(() => buildDashboardItems(tasks, defects), [tasks, defects]);
+  const activePeople = people.filter((person) => person.employmentStatus !== "LEFT" && person.employmentStatus !== "DISABLED");
+  const projectOptions = projects.map((project) => ({ value: String(project.id), label: project.name }));
+  const personOptions = activePeople.map((person) => ({ value: String(person.id), label: `${person.name}${person.primaryPosition?.name ? `（${person.primaryPosition.name}）` : ""}` }));
+  const positionOptions = positions.filter((position) => position.isActive !== false).map((position) => ({ value: position.code, label: position.name }));
+
+  const filteredItems = dashboardItems.filter((item) =>
+    (itemTypeFilter === "ALL" || item.itemType === itemTypeFilter) &&
+    itemMatchesStatusRange(item, statusRangeFilter, config.includeClosedItems) &&
+    inSelected(projectFilter, String(item.projectId || "")) &&
+    inSelected(assigneeFilter, String(item.assigneeId || "")) &&
+    inSelected(testerFilter, String(item.testerId || "")) &&
+    (!positionFilter.length || positionFilter.includes(item.assigneePositionCode || "") || positionFilter.includes(item.testerPositionCode || "")) &&
+    dashboardDateInRange(item.plannedFinishDate, plannedRange)
+  );
+
+  const filteredRequirements = requirements.filter((requirement) => inSelected(projectFilter, String(requirement.projectId)));
+  const filteredTaskItems = filteredItems.filter((item) => item.itemType === "TASK");
+  const filteredDefectItems = filteredItems.filter((item) => item.itemType === "DEFECT");
+  const unfinishedRequirements = filteredRequirements.filter((requirement) => ["TO_REVIEW", "APPROVED", "NEEDS_SUPPLEMENT", "DEVELOPING"].includes(requirement.status));
+  const unfinishedTasks = filteredTaskItems.filter((item) => item.isUnfinished);
+  const unfinishedDefects = filteredDefectItems.filter((item) => item.isUnfinished);
+  const unfinishedItems = filteredItems.filter((item) => item.isUnfinished);
+  const dueSoonItems = filteredItems.filter((item) => isDashboardItemDueSoon(item, config.dueSoonDays));
+  const overdueItems = filteredItems.filter(isDashboardItemOverdue);
+  const highPriorityItems = filteredItems.filter((item) => item.isUnfinished && item.priorityScore >= config.highPriorityThreshold);
+
+  const personRows: DashboardPersonRow[] = activePeople
+    .filter((person) => inSelected(assigneeFilter, String(person.id)) || inSelected(testerFilter, String(person.id)))
+    .filter((person) => !positionFilter.length || positionFilter.includes(personPrimaryPositionCode(person)))
+    .map((person) => {
+      const developerItems = filteredItems.filter((item) => item.assigneeId === person.id);
+      const testerItems = filteredItems.filter((item) => item.testerId === person.id);
+      const personItemsByKey = new Map([...developerItems, ...testerItems].map((item) => [item.key, item]));
+      const personItems = Array.from(personItemsByKey.values());
+      const developerUnfinishedCount = developerItems.filter((item) => item.isUnfinished).length;
+      const testerUnfinishedCount = testerItems.filter((item) => item.isUnfinished).length;
+      const overdueCount = personItems.filter(isDashboardItemOverdue).length;
+      const completedTimes = personItems.map((item) => item.actualFinishDate).filter(Boolean) as string[];
+      return {
+        key: person.id,
+        person,
+        developerUnfinishedCount,
+        testerUnfinishedCount,
+        taskCount: personItems.filter((item) => item.itemType === "TASK").length,
+        defectCount: personItems.filter((item) => item.itemType === "DEFECT").length,
+        waitingTestCount: testerItems.filter((item) => ["TO_TEST", "TESTING", "FIXED"].includes(item.status)).length,
+        dueSoonCount: personItems.filter((item) => isDashboardItemDueSoon(item, config.dueSoonDays)).length,
+        overdueCount,
+        highestPriorityScore: Math.max(0, ...personItems.map((item) => item.priorityScore || 0)),
+        load: personLoadStatus(developerUnfinishedCount + testerUnfinishedCount, overdueCount, config),
+        latestCompletedAt: completedTimes.sort((left, right) => dateTimeValue(right) - dateTimeValue(left))[0]
+      };
+    });
+
+  const overloadedPeopleCount = personRows.filter((row) => row.load === "OVERLOADED").length;
+  const visibleProjects = projects.filter((project) => inSelected(projectFilter, String(project.id)));
+  const projectRows: DashboardProjectRow[] = visibleProjects.map((project) => {
+    const projectItems = filteredItems.filter((item) => item.projectId === project.id);
+    const projectRequirements = filteredRequirements.filter((requirement) => requirement.projectId === project.id);
+    const updatedValues = [project.updatedAt, ...projectItems.map((item) => item.updatedAt)].filter(Boolean) as string[];
+    return {
+      key: project.id,
+      project,
+      requirementCount: projectRequirements.length,
+      taskCount: projectItems.filter((item) => item.itemType === "TASK").length,
+      defectCount: projectItems.filter((item) => item.itemType === "DEFECT").length,
+      unfinishedCount: projectItems.filter((item) => item.isUnfinished).length,
+      dueSoonCount: projectItems.filter((item) => isDashboardItemDueSoon(item, config.dueSoonDays)).length,
+      overdueCount: projectItems.filter(isDashboardItemOverdue).length,
+      highestPriorityScore: Math.max(0, ...projectItems.map((item) => item.priorityScore || 0), ...projectRequirements.map((item) => item.priorityScore || 0)),
+      health: projectHealth(projectItems, config),
+      lastUpdatedAt: updatedValues.sort((left, right) => dateTimeValue(right) - dateTimeValue(left))[0]
+    };
+  });
+
+  const riskItems = filteredItems
+    .map((item) => ({ ...item, riskReasons: dashboardRiskReasons(item, config) }))
+    .filter((item) => item.riskReasons.length)
+    .sort((left, right) => Number(isDashboardItemOverdue(right)) - Number(isDashboardItemOverdue(left)) || (right.priorityScore || 0) - (left.priorityScore || 0) || dateTimeValue(right.updatedAt) - dateTimeValue(left.updatedAt));
+
+  const riskSearchOptions: Array<TableSearchOption<(typeof riskItems)[number]>> = [
+    { value: "title", label: "事项", type: "text", reader: (item) => item.title },
+    { value: "project", label: "所属项目", type: "text", reader: (item) => item.projectName },
+    { value: "assignee", label: "负责人", type: "text", reader: (item) => item.assigneeName },
+    { value: "tester", label: "测试负责人", type: "text", reader: (item) => item.testerName },
+    { value: "plannedFinishDate", label: "计划完成", type: "date", reader: (item) => item.plannedFinishDate }
+  ];
+  const visibleRiskItems = riskItems.filter((item) => matchSearchOption(item, riskSearchField, riskKeyword, riskDateRange, riskSearchOptions));
+
+  const healthData = Object.entries(
+    projectRows.reduce<Record<string, number>>((acc, row) => {
+      acc[DASHBOARD_HEALTH_LABELS[row.health]] = (acc[DASHBOARD_HEALTH_LABELS[row.health]] || 0) + 1;
+      return acc;
+    }, {})
+  ).map(([type, value]) => ({ type, value }));
+  const taskStatusData = TASK_STATUS_OPTIONS.map((option) => ({ status: option.label, count: filteredItems.filter((item) => item.itemType === "TASK" && item.status === option.value).length })).filter((item) => item.count > 0);
+  const defectStatusData = DEFECT_STATUS_OPTIONS.map((option) => ({ status: option.label, count: filteredItems.filter((item) => item.itemType === "DEFECT" && item.status === option.value).length })).filter((item) => item.count > 0);
+  const workloadData = positionOptions
+    .map((option) => ({
+      position: option.label,
+      count: filteredItems.filter((item) => item.isUnfinished && item.assigneePositionCode === option.value).length
+    }))
+    .filter((item) => item.count > 0);
+  const trendDates = lastDateKeys(14);
+  const trendData = trendDates.flatMap((date) => [
+    { date: date.slice(5), type: "开发任务", count: filteredItems.filter((item) => item.itemType === "TASK" && item.isCompleted && dashboardDateKey(item.actualFinishDate || item.updatedAt) === date).length },
+    { date: date.slice(5), type: "缺陷修复", count: filteredItems.filter((item) => item.itemType === "DEFECT" && item.isCompleted && dashboardDateKey(item.actualFinishDate || item.updatedAt) === date).length }
+  ]);
+  const selectedProjectItems = scheduleProject ? filteredItems.filter((item) => item.projectId === scheduleProject.id) : [];
+  const projectGanttTasks = selectedProjectItems.map((item) => item.rawTask).filter(Boolean) as DevTask[];
+  const projectGanttDefects = selectedProjectItems.map((item) => item.rawDefect).filter(Boolean) as Defect[];
+  const projectGanttResetKey = [
+    projectFilter.join(","),
+    plannedRange?.[0]?.valueOf?.() || "",
+    plannedRange?.[1]?.valueOf?.() || "",
+    itemTypeFilter,
+    statusRangeFilter,
+    assigneeFilter.join(","),
+    testerFilter.join(","),
+    positionFilter.join(","),
+    scheduleProject?.id || ""
+  ].join("|");
+  const readOnlyProjectScheduleSave = async () => false;
+
+  const projectColumns: ColumnsType<DashboardProjectRow> = [
+    { title: "项目名称", width: 220, sorter: compareText<DashboardProjectRow>((row) => row.project.name), render: (_: unknown, row) => <Space direction="vertical" size={1}><strong>{row.project.name}</strong><span className="muted-line">{row.project.code}</span></Space> },
+    { title: "项目状态", width: 110, sorter: compareText<DashboardProjectRow>((row) => projectStageLabel(row.project.stage)), render: (_: unknown, row) => <Tag>{projectStageLabel(row.project.stage)}</Tag> },
+    { title: "负责人", width: 110, sorter: compareText<DashboardProjectRow>((row) => row.project.owner?.name), render: (_: unknown, row) => row.project.owner?.name || "-" },
+    { title: "计划周期", width: 190, sorter: compareDate<DashboardProjectRow>((row) => row.project.plannedEndDate), render: (_: unknown, row) => `${fmtDate(row.project.plannedStartDate)} - ${fmtDate(row.project.plannedEndDate)}` },
+    { title: "需求", width: 80, dataIndex: "requirementCount", sorter: compareNumber<DashboardProjectRow>((row) => row.requirementCount) },
+    { title: "任务", width: 80, dataIndex: "taskCount", sorter: compareNumber<DashboardProjectRow>((row) => row.taskCount) },
+    { title: "缺陷", width: 80, dataIndex: "defectCount", sorter: compareNumber<DashboardProjectRow>((row) => row.defectCount) },
+    { title: "未完成事项", width: 110, dataIndex: "unfinishedCount", sorter: compareNumber<DashboardProjectRow>((row) => row.unfinishedCount) },
+    { title: "临期", width: 80, dataIndex: "dueSoonCount", sorter: compareNumber<DashboardProjectRow>((row) => row.dueSoonCount) },
+    { title: "超期", width: 80, dataIndex: "overdueCount", sorter: compareNumber<DashboardProjectRow>((row) => row.overdueCount) },
+    { title: "最高优先级", width: 120, dataIndex: "highestPriorityScore", sorter: compareNumber<DashboardProjectRow>((row) => row.highestPriorityScore) },
+    { title: "健康状态", width: 110, sorter: compareText<DashboardProjectRow>((row) => DASHBOARD_HEALTH_LABELS[row.health]), render: (_: unknown, row) => <DashboardHealthTag value={row.health} /> },
+    { title: "最近更新", width: 160, sorter: compareDate<DashboardProjectRow>((row) => row.lastUpdatedAt), render: (_: unknown, row) => fmtDateTime(row.lastUpdatedAt) },
+    { title: "操作", width: 170, fixed: "right", render: (_: unknown, row) => (
+      <TableActions>
+        <AntButton size="small" type="primary" onClick={() => onOpenProject(row.project.id)}>查看项目</AntButton>
+        <AntButton size="small" onClick={() => setScheduleProject(row.project)}>查看排期</AntButton>
+      </TableActions>
+    ) }
+  ];
+
+  const personColumns: ColumnsType<DashboardPersonRow> = [
+    { title: "姓名", width: 130, sorter: compareText<DashboardPersonRow>((row) => row.person.name), render: (_: unknown, row) => <Space direction="vertical" size={1}><strong>{row.person.name}</strong><span className="muted-line">{row.person.employeeNo || "-"}</span></Space> },
+    { title: "岗位", width: 120, sorter: compareText<DashboardPersonRow>((row) => personPrimaryPositionLabel(row.person)), render: (_: unknown, row) => personPrimaryPositionLabel(row.person) },
+    { title: "组织", width: 150, sorter: compareText<DashboardPersonRow>((row) => row.person.organization?.name), render: (_: unknown, row) => row.person.organization?.name || "-" },
+    { title: "开发负责未完成", width: 140, dataIndex: "developerUnfinishedCount", sorter: compareNumber<DashboardPersonRow>((row) => row.developerUnfinishedCount) },
+    { title: "测试负责未完成", width: 140, dataIndex: "testerUnfinishedCount", sorter: compareNumber<DashboardPersonRow>((row) => row.testerUnfinishedCount) },
+    { title: "开发任务", width: 100, dataIndex: "taskCount", sorter: compareNumber<DashboardPersonRow>((row) => row.taskCount) },
+    { title: "缺陷修复", width: 100, dataIndex: "defectCount", sorter: compareNumber<DashboardPersonRow>((row) => row.defectCount) },
+    { title: "待测试/验证", width: 120, dataIndex: "waitingTestCount", sorter: compareNumber<DashboardPersonRow>((row) => row.waitingTestCount) },
+    { title: "临期", width: 80, dataIndex: "dueSoonCount", sorter: compareNumber<DashboardPersonRow>((row) => row.dueSoonCount) },
+    { title: "超期", width: 80, dataIndex: "overdueCount", sorter: compareNumber<DashboardPersonRow>((row) => row.overdueCount) },
+    { title: "最高优先级", width: 120, dataIndex: "highestPriorityScore", sorter: compareNumber<DashboardPersonRow>((row) => row.highestPriorityScore) },
+    { title: "负载", width: 90, sorter: compareText<DashboardPersonRow>((row) => DASHBOARD_LOAD_LABELS[row.load]), render: (_: unknown, row) => <DashboardLoadTag value={row.load} /> },
+    { title: "最近完成", width: 160, sorter: compareDate<DashboardPersonRow>((row) => row.latestCompletedAt), render: (_: unknown, row) => fmtDateTime(row.latestCompletedAt) },
+    { title: "操作", width: 120, fixed: "right", render: (_: unknown, row) => <TableActions><AntButton size="small" type="primary" onClick={() => onViewPersonSchedule(row.person)}>查看排期</AntButton></TableActions> }
+  ];
+
+  const riskColumns: ColumnsType<(typeof riskItems)[number]> = [
+    { title: "事项", width: 230, sorter: compareText<(typeof riskItems)[number]>((item) => item.title), render: (_: unknown, item) => <Space direction="vertical" size={1}><strong>{item.title}</strong><span className="muted-line">{item.code}</span></Space> },
+    { title: "类型", width: 100, sorter: compareText<(typeof riskItems)[number]>((item) => item.typeLabel), render: (_: unknown, item) => item.typeLabel },
+    { title: "所属项目", width: 170, sorter: compareText<(typeof riskItems)[number]>((item) => item.projectName), render: (_: unknown, item) => item.projectName },
+    { title: "关联需求", width: 180, sorter: compareText<(typeof riskItems)[number]>((item) => item.requirementName), render: (_: unknown, item) => item.requirementName },
+    { title: "关联任务", width: 180, sorter: compareText<(typeof riskItems)[number]>((item) => item.taskName), render: (_: unknown, item) => item.taskName },
+    { title: "负责人", width: 110, sorter: compareText<(typeof riskItems)[number]>((item) => item.assigneeName), render: (_: unknown, item) => item.assigneeName },
+    { title: "测试负责人", width: 120, sorter: compareText<(typeof riskItems)[number]>((item) => item.testerName), render: (_: unknown, item) => item.testerName },
+    { title: "状态", width: 110, sorter: compareText<(typeof riskItems)[number]>((item) => label(item.status)), render: (_: unknown, item) => <Tag color={item.itemType === "TASK" ? taskStatusColor(item.status) : defectStatusColor(item.status)}>{label(item.status)}</Tag> },
+    { title: "计划完成", width: 120, sorter: compareDate<(typeof riskItems)[number]>((item) => item.plannedFinishDate), render: (_: unknown, item) => fmtDate(item.plannedFinishDate || undefined) },
+    { title: "优先级分数", width: 120, dataIndex: "priorityScore", sorter: compareNumber<(typeof riskItems)[number]>((item) => item.priorityScore) },
+    { title: "风险原因", width: 180, render: (_: unknown, item) => <Space size={4} wrap>{item.riskReasons.map((reason) => <Tag key={reason} color={reason === "超期" || reason === "阻塞缺陷" ? "red" : reason === "临期" || reason === "严重缺陷" ? "gold" : "blue"}>{reason}</Tag>)}</Space> },
+    { title: "创建时间", width: 160, sorter: compareDate<(typeof riskItems)[number]>((item) => item.createdAt), render: (_: unknown, item) => fmtDateTime(item.createdAt) },
+    { title: "最近更新", width: 160, sorter: compareDate<(typeof riskItems)[number]>((item) => item.updatedAt), render: (_: unknown, item) => fmtDateTime(item.updatedAt) },
+    { title: "操作", width: 150, fixed: "right", render: (_: unknown, item) => (
+      <TableActions>
+        {item.rawTask ? <AntButton size="small" type="primary" onClick={() => onViewTask(item.rawTask!)}>详情</AntButton> : null}
+        {item.rawDefect ? <AntButton size="small" type="primary" onClick={() => onViewDefect(item.rawDefect!)}>详情</AntButton> : null}
+        {item.projectId ? <AntButton size="small" onClick={() => onOpenProject(item.projectId!)}>项目</AntButton> : null}
+      </TableActions>
+    ) }
+  ];
+
+  const overviewMetrics = [
+    { label: "进行中项目/项目总数", value: visibleProjects.filter((project) => project.stage === "IN_PROGRESS" || project.stage === "ONLINE_OPS").length, total: visibleProjects.length },
+    { label: "未完成需求/需求总数", value: unfinishedRequirements.length, total: filteredRequirements.length },
+    { label: "未完成开发任务/开发任务总数", value: unfinishedTasks.length, total: filteredTaskItems.length, tone: unfinishedTasks.length ? "warn" as const : undefined },
+    { label: "未闭环缺陷/缺陷总数", value: unfinishedDefects.length, total: filteredDefectItems.length, tone: unfinishedDefects.length ? "warn" as const : undefined },
+    { label: "临期事项/事项总数", value: dueSoonItems.length, total: filteredItems.length, tone: dueSoonItems.length ? "warn" as const : undefined },
+    { label: "超期事项/事项总数", value: overdueItems.length, total: filteredItems.length, tone: overdueItems.length ? "warn" as const : undefined },
+    { label: "超载人员/人员总数", value: overloadedPeopleCount, total: personRows.length, tone: overloadedPeopleCount ? "warn" as const : undefined },
+    { label: "高优先级未完成/未完成事项总数", value: highPriorityItems.length, total: unfinishedItems.length, tone: highPriorityItems.length ? "warn" as const : undefined }
+  ];
+
+  const tabs = [
+    { key: "overview", label: "总览" },
+    { key: "projects", label: "项目视角" },
+    { key: "people", label: "人员视角" },
+    { key: "risks", label: "风险事项" }
+  ];
+
+  return (
+    <section className="page-stack dashboard-page">
+      <div className="module-page-head dashboard-page-head">
+        <div>
+          <p className="page-kicker">管理驾驶舱</p>
+          <h1>全局看板</h1>
+          <p>从项目、人员、风险和趋势四个角度掌握整体交付情况。</p>
+        </div>
+        <div className="page-head-stats">
+          <span>临期阈值 <strong>{config.dueSoonDays} 天</strong></span>
+          <span>高优先级 <strong>{config.highPriorityThreshold}</strong></span>
+          <span>超载阈值 <strong>{config.saturatedLoadLimit}</strong></span>
+        </div>
+      </div>
+
+      <Card className="enterprise-card dashboard-filter-card" title="全局筛选">
+        <Space size={8} wrap>
+          <AntSelect mode="multiple" allowClear showSearch optionFilterProp="label" maxTagCount={1} maxTagTextLength={12} maxTagPlaceholder={(omittedValues) => `+${omittedValues.length}`} className="dashboard-filter-select dashboard-filter-project" placeholder="项目" value={projectFilter} options={projectOptions} onChange={setProjectFilter} />
+          <AntDatePicker.RangePicker className="dashboard-range-picker" value={plannedRange as any} onChange={(dates) => setPlannedRange(dates as DateRangeValue)} />
+          <AntSelect className="dashboard-filter-select" placeholder="事项类型" value={itemTypeFilter} options={DASHBOARD_ITEM_TYPE_OPTIONS} onChange={setItemTypeFilter} />
+          <AntSelect className="dashboard-filter-select" placeholder="状态范围" value={statusRangeFilter} options={DASHBOARD_STATUS_RANGE_OPTIONS} onChange={setStatusRangeFilter} />
+          <AntSelect mode="multiple" allowClear showSearch optionFilterProp="label" maxTagCount={1} maxTagTextLength={10} maxTagPlaceholder={(omittedValues) => `+${omittedValues.length}`} className="dashboard-filter-select" placeholder="负责人" value={assigneeFilter} options={personOptions} onChange={setAssigneeFilter} />
+          <AntSelect mode="multiple" allowClear showSearch optionFilterProp="label" maxTagCount={1} maxTagTextLength={10} maxTagPlaceholder={(omittedValues) => `+${omittedValues.length}`} className="dashboard-filter-select" placeholder="测试负责人" value={testerFilter} options={personOptions} onChange={setTesterFilter} />
+          <AntSelect mode="multiple" allowClear showSearch optionFilterProp="label" maxTagCount={1} maxTagTextLength={10} maxTagPlaceholder={(omittedValues) => `+${omittedValues.length}`} className="dashboard-filter-select" placeholder="岗位" value={positionFilter} options={positionOptions} onChange={setPositionFilter} />
+        </Space>
+      </Card>
+
+      <AntTabs className="workbench-tabs" activeKey={activeTab} items={tabs} onChange={setActiveTab} />
+
+      {activeTab === "overview" ? (
+        <>
+          <section className="project-overview-grid dashboard-metric-grid">
+            {overviewMetrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} total={metric.total} tone={metric.tone} />)}
+          </section>
+          <section className="dashboard-chart-grid">
+            <ChartCard title="项目健康分布" dataLength={healthData.length}>
+              <Suspense fallback={<AntEmpty image={AntEmpty.PRESENTED_IMAGE_SIMPLE} description="图表加载中" />}>
+                <DashboardPie data={healthData} angleField="value" colorField="type" height={240} innerRadius={0.62} legend={{ position: "bottom" }} />
+              </Suspense>
+            </ChartCard>
+            <ChartCard title="开发任务状态分布" dataLength={taskStatusData.length}>
+              <Suspense fallback={<AntEmpty image={AntEmpty.PRESENTED_IMAGE_SIMPLE} description="图表加载中" />}>
+                <DashboardColumn data={taskStatusData} xField="status" yField="count" height={240} />
+              </Suspense>
+            </ChartCard>
+            <ChartCard title="缺陷状态分布" dataLength={defectStatusData.length}>
+              <Suspense fallback={<AntEmpty image={AntEmpty.PRESENTED_IMAGE_SIMPLE} description="图表加载中" />}>
+                <DashboardColumn data={defectStatusData} xField="status" yField="count" height={240} />
+              </Suspense>
+            </ChartCard>
+            <ChartCard title="岗位工作量分布" dataLength={workloadData.length}>
+              <Suspense fallback={<AntEmpty image={AntEmpty.PRESENTED_IMAGE_SIMPLE} description="图表加载中" />}>
+                <DashboardColumn data={workloadData} xField="position" yField="count" height={240} />
+              </Suspense>
+            </ChartCard>
+          </section>
+          <ChartCard title="近 14 天完成趋势" dataLength={trendData.some((item) => item.count > 0) ? trendData.length : 0}>
+            <Suspense fallback={<AntEmpty image={AntEmpty.PRESENTED_IMAGE_SIMPLE} description="图表加载中" />}>
+              <DashboardLine data={trendData} xField="date" yField="count" colorField="type" height={260} point={{ size: 3 }} legend={{ position: "bottom" }} />
+            </Suspense>
+          </ChartCard>
+        </>
+      ) : null}
+
+      {activeTab === "projects" ? (
+        <Card className="enterprise-card" title="项目视角">
+          <AntTable className="enterprise-table" rowKey="key" columns={projectColumns} dataSource={projectRows} pagination={tablePagination(projectRows.length)} scroll={{ x: 1830 }} />
+        </Card>
+      ) : null}
+
+      {activeTab === "people" ? (
+        <Card className="enterprise-card" title="人员视角">
+          <AntTable className="enterprise-table" rowKey="key" columns={personColumns} dataSource={personRows} pagination={tablePagination(personRows.length)} scroll={{ x: 1760 }} />
+        </Card>
+      ) : null}
+
+      {activeTab === "risks" ? (
+        <Card className="enterprise-card" title="风险事项">
+          <Space size={8} wrap style={{ marginBottom: 14 }}>
+            <TableSearchControl
+              options={riskSearchOptions}
+              field={riskSearchField}
+              keyword={riskKeyword}
+              dateRange={riskDateRange}
+              onFieldChange={setRiskSearchField}
+              onKeywordChange={setRiskKeyword}
+              onDateRangeChange={setRiskDateRange}
+            />
+          </Space>
+          <AntTable className="enterprise-table" rowKey="key" columns={riskColumns} dataSource={visibleRiskItems} pagination={tablePagination(visibleRiskItems.length)} scroll={{ x: 2120 }} />
+        </Card>
+      ) : null}
+      {scheduleProject ? (
+        <AssigneeScheduleDialog
+          viewMode="project"
+          title={`${scheduleProject.name}的项目排期`}
+          summary={`开发任务 ${projectGanttTasks.length} 项，缺陷修复 ${projectGanttDefects.length} 项；按当前全局筛选和所选项目展示，此处只读查看`}
+          resetKey={projectGanttResetKey}
+          defaultTaskStatuses={[]}
+          defaultDefectStatuses={[]}
+          projectPlan={{
+            title: scheduleProject.name,
+            code: scheduleProject.code,
+            ownerName: scheduleProject.owner?.name,
+            plannedStartDate: scheduleProject.plannedStartDate,
+            plannedEndDate: scheduleProject.plannedEndDate
+          }}
+          tasks={projectGanttTasks}
+          defects={projectGanttDefects}
+          onClose={() => setScheduleProject(null)}
+          onSaveChanges={readOnlyProjectScheduleSave}
+        />
+      ) : null}
+    </section>
+  );
 }
 
 function Workbench({
@@ -1510,6 +2267,7 @@ function ProjectManagement({
   onReopenDefect,
   onReviewRequirement,
   onAcceptRequirement,
+  onSupplementRequirement,
   onViewRequirement,
   onProjectLifecycle,
   canTest,
@@ -1542,6 +2300,7 @@ function ProjectManagement({
   onReopenDefect: (defect: Defect) => void;
   onReviewRequirement: (requirement: Requirement) => void;
   onAcceptRequirement: (requirement: Requirement) => void;
+  onSupplementRequirement: (requirement: Requirement) => void;
   onViewRequirement: (requirement: Requirement) => void;
   onProjectLifecycle: (project: Project, action: ProjectLifecycleAction) => void;
   canTest: boolean;
@@ -1627,6 +2386,7 @@ function ProjectManagement({
   );
   const canReviewRequirementByStatus = (requirement: Requirement) => ["TO_REVIEW", "NEEDS_SUPPLEMENT"].includes(requirement.status);
   const canOperateRequirement = (requirement: Requirement) => !["CHANGE", "OPTIMIZATION"].includes(requirement.status);
+  const canSupplementRequirementByStatus = (requirement: Requirement) => REQUIREMENT_SUPPLEMENT_ALLOWED_STATUSES.includes(requirement.status);
   const canCreateTaskByStatus = (requirement: Requirement) => !isProjectClosed && canOperateRequirement(requirement) && ["APPROVED", "DEVELOPING"].includes(requirement.status);
   const requirementTasks = (requirement: Requirement) => tasks.filter((task) => task.requirement?.id === requirement.id);
   const canAcceptRequirementByStatus = (requirement: Requirement) => {
@@ -1641,6 +2401,11 @@ function ProjectManagement({
     if (!linkedTasks.every((task) => task.status === "TEST_PASSED")) return "需求下所有任务测试通过后才能验收完成";
     return "填写验收结论并完成需求";
   };
+  const supplementButtonTitle = (requirement: Requirement) => (
+    canSupplementRequirementByStatus(requirement)
+      ? "补充需求提出阶段未覆盖的说明"
+      : "只有已完成之前的需求状态可以补充说明"
+  );
   const projectTabs = [
     ["overview", "概览"],
     ["requirements", "需求"],
@@ -1680,6 +2445,9 @@ function ProjectManagement({
           <AntButton size="small" onClick={() => onViewRequirement(requirement)}>详情</AntButton>
           {isProductManager ? (
             <AntButton size="small" disabled={!canAcceptRequirementByStatus(requirement)} title={acceptanceButtonTitle(requirement)} onClick={() => onAcceptRequirement(requirement)}>验收</AntButton>
+          ) : null}
+          {isProductManager ? (
+            <AntButton size="small" disabled={!canSupplementRequirementByStatus(requirement)} title={supplementButtonTitle(requirement)} onClick={() => onSupplementRequirement(requirement)}>补充</AntButton>
           ) : null}
           {canCreateTaskByPosition ? (
             <AntButton size="small" disabled={!canCreateTaskByStatus(requirement)} title={canCreateTaskByStatus(requirement) ? "创建任务" : "评审通过或开发中才可以创建任务"} onClick={() => onNew("task", { projectId: requirement.projectId, requirementId: requirement.id })}>任务</AntButton>
@@ -2473,11 +3241,13 @@ function AdminCenter({
     matchSearchOption(item, dictionarySearchField, dictionaryKeyword, dictionaryDateRange, dictionarySearchOptions) &&
     inSelected(dictionaryStatusFilter, String(Boolean(item.isActive)))
   );
+  const boardRuleConfig = data.boardRuleConfig || DEFAULT_BOARD_RULE_CONFIG;
   const adminSections = [
     ["people", "人员账号", data.people.length],
     ["org", "组织岗位", data.organizations.length + data.positions.length],
     ["dictionary", "字典配置", data.dictionaries.length],
     ["priority", "优先级规则", data.requirementPriorities.length + data.defectPriorities.length],
+    ["board", "看板规则", 1],
     ["logs", "处理记录", data.logs.length]
   ] as const;
   const peopleColumns = [
@@ -2700,6 +3470,23 @@ function AdminCenter({
           <AntTable className="enterprise-table" rowKey="id" columns={dictionaryColumns} dataSource={filteredDictionaries} pagination={tablePagination(filteredDictionaries.length)} scroll={{ x: 1160 }} />
         </Card>
       ) : null}
+      {activeAdminSection === "board" ? (
+        <Card
+          className="enterprise-card"
+          title="看板规则配置"
+          extra={<AntButton type="primary" onClick={() => onEdit({ kind: "boardRuleConfig", item: boardRuleConfig })}>编辑规则</AntButton>}
+        >
+          <Descriptions className="ant-project-descriptions" size="small" column={3} bordered>
+            <Descriptions.Item label="临期阈值">{boardRuleConfig.dueSoonDays} 天</Descriptions.Item>
+            <Descriptions.Item label="正常负载上限">{boardRuleConfig.normalLoadLimit} 项</Descriptions.Item>
+            <Descriptions.Item label="饱和负载上限">{boardRuleConfig.saturatedLoadLimit} 项</Descriptions.Item>
+            <Descriptions.Item label="项目停滞天数">{boardRuleConfig.staleProjectDays} 天</Descriptions.Item>
+            <Descriptions.Item label="高优先级阈值">{boardRuleConfig.highPriorityThreshold}</Descriptions.Item>
+            <Descriptions.Item label="统计已关闭事项">{boardRuleConfig.includeClosedItems ? "是" : "否"}</Descriptions.Item>
+          </Descriptions>
+          <p className="section-note">这些规则会影响全局看板的临期、超期、项目健康、人员负载和高优先级统计。</p>
+        </Card>
+      ) : null}
       {activeAdminSection === "logs" ? <RecentLogs logs={data.logs} /> : null}
     </section>
   );
@@ -2735,7 +3522,8 @@ function AdminEditDialog({
     position: item.id ? "编辑岗位" : "新增岗位",
     dictionary: item.id ? "编辑字典" : "新增字典",
     requirementPriority: "编辑需求优先级",
-    defectPriority: "编辑缺陷分值"
+    defectPriority: "编辑缺陷分值",
+    boardRuleConfig: "编辑看板规则"
   };
   const pathMap: Record<AdminEditKind, string> = {
     personAccount: "/admin/person-account",
@@ -2743,7 +3531,8 @@ function AdminEditDialog({
     position: "/admin/positions",
     dictionary: "/admin/dictionaries",
     requirementPriority: "/admin/requirement-priorities",
-    defectPriority: "/admin/defect-priorities"
+    defectPriority: "/admin/defect-priorities",
+    boardRuleConfig: "/admin/board-rule-config"
   };
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -2850,6 +3639,18 @@ function AdminEditDialog({
               <Field name="offlineScore" label="线下基础分" type="number" required defaultValue={draftValue(draft, "offlineScore", item.offlineScore)} />
               <Select name="isActive" label="状态" defaultValue={draftValue(draft, "isActive", String(item.isActive ?? true))} options={[["true", "启用"], ["false", "停用"]]} />
               <Field name="sort" label="排序" type="number" defaultValue={draftValue(draft, "sort", item.sort ?? 0)} />
+            </>
+          ) : null}
+
+          {activeAdminKind === "boardRuleConfig" ? (
+            <>
+              <Field name="dueSoonDays" label="临期阈值（天）" type="number" required defaultValue={draftValue(draft, "dueSoonDays", item.dueSoonDays ?? DEFAULT_BOARD_RULE_CONFIG.dueSoonDays)} />
+              <Field name="normalLoadLimit" label="人员正常负载上限（项）" type="number" required defaultValue={draftValue(draft, "normalLoadLimit", item.normalLoadLimit ?? DEFAULT_BOARD_RULE_CONFIG.normalLoadLimit)} />
+              <Field name="saturatedLoadLimit" label="人员饱和负载上限（项）" type="number" required defaultValue={draftValue(draft, "saturatedLoadLimit", item.saturatedLoadLimit ?? DEFAULT_BOARD_RULE_CONFIG.saturatedLoadLimit)} />
+              <Field name="staleProjectDays" label="项目停滞天数" type="number" required defaultValue={draftValue(draft, "staleProjectDays", item.staleProjectDays ?? DEFAULT_BOARD_RULE_CONFIG.staleProjectDays)} />
+              <Field name="highPriorityThreshold" label="高优先级阈值" type="number" required defaultValue={draftValue(draft, "highPriorityThreshold", item.highPriorityThreshold ?? DEFAULT_BOARD_RULE_CONFIG.highPriorityThreshold)} />
+              <Select name="includeClosedItems" label="是否统计已关闭事项" defaultValue={draftValue(draft, "includeClosedItems", String(item.includeClosedItems ?? DEFAULT_BOARD_RULE_CONFIG.includeClosedItems))} options={[["false", "否"], ["true", "是"]]} />
+              <p className="section-note">临期、人员负载、项目停滞和高优先级判断会直接影响全局看板统计。</p>
             </>
           ) : null}
 
@@ -3472,6 +4273,104 @@ function RequirementAcceptanceDialog({
   );
 }
 
+function RequirementSupplementDialog({
+  requirement,
+  onClose,
+  onSubmit
+}: {
+  requirement: Requirement | null;
+  onClose: () => void;
+  onSubmit: (requirement: Requirement, body: any) => Promise<boolean>;
+}) {
+  const draftKey = requirement ? `${FORM_DRAFT_PREFIX}:requirement-supplement:${requirement.id}` : "";
+  const draft = requirement ? readFormDraft(draftKey) : null;
+  const draftRestored = hasDraftValues(draft);
+  const [draftMessage, setDraftMessage] = useState("");
+  const [draftStamp, setDraftStamp] = useState(0);
+  useEffect(() => {
+    setDraftMessage("");
+  }, [draftKey]);
+  if (!requirement) return null;
+  const activeRequirement = requirement;
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const invalidRichField = Array.from(formElement.querySelectorAll<HTMLInputElement>("[data-rich-required='true']")).find((input) => !stripRichText(input.value));
+    if (invalidRichField) {
+      const fieldLabel = invalidRichField.dataset.richLabel || "富文本字段";
+      setDraftMessage(`${fieldLabel}不能为空。`);
+      invalidRichField.closest(".rich-editor-field")?.querySelector<HTMLElement>(".rich-editor")?.focus();
+      return;
+    }
+    const form = new FormData(formElement);
+    const body = await formDataToBody(form);
+    Object.keys(body).forEach((key) => {
+      if (key.endsWith("__required")) delete body[key];
+    });
+    const success = await onSubmit(activeRequirement, body);
+    if (success) clearFormDraft(draftKey);
+  }
+
+  function saveDraft(event: MouseEvent<HTMLButtonElement>) {
+    const form = event.currentTarget.form;
+    if (!form) return;
+    writeFormDraft(draftKey, form);
+    setDraftMessage("草稿已暂存，下次打开这个补充表单会自动带出。");
+  }
+
+  function discardDraft() {
+    clearFormDraft(draftKey);
+    setDraftMessage("草稿已清除。");
+    setDraftStamp((value) => value + 1);
+  }
+
+  return (
+    <AntModal
+      className="enterprise-form-modal"
+      title="需求补充"
+      open={Boolean(requirement)}
+      onCancel={onClose}
+      footer={null}
+      width={820}
+      destroyOnHidden
+    >
+      <form key={`${draftKey}:${draftStamp}`} className="drawer-form modal-form" onSubmit={submit}>
+        <ReadonlyField name="requirementTitle" label="需求" value={activeRequirement.title} displayValue={`${activeRequirement.title}（${activeRequirement.code}）`} />
+        <div className="form-inline-grid">
+          <DisplayField label="需求状态" value={label(activeRequirement.status)} />
+          <DisplayField label="上线状态" value={label(activeRequirement.launchStatus || "TO_RELEASE")} />
+          <DisplayField label="优先级分数" value={activeRequirement.priorityScore} />
+        </div>
+        <Field name="title" label="补充标题" required defaultValue={draftValue(draft, "title")} />
+        <Select
+          name="type"
+          label="补充类型"
+          options={REQUIREMENT_SUPPLEMENT_TYPE_OPTIONS.map((item) => [item.value, item.label] as [string, string])}
+          defaultValue={draftValue(draft, "type", "DETAIL")}
+        />
+        <RichTextEditor name="reason" label="补充原因" defaultValue={draftValue(draft, "reason")} />
+        <RichTextEditor name="content" label="补充内容" required defaultValue={draftValue(draft, "content")} />
+        <RichTextEditor name="impactScope" label="影响范围/处理建议" defaultValue={draftValue(draft, "impactScope")} />
+        {draftMessage || draftRestored ? <p className="draft-hint">{draftMessage || "已恢复上次暂存草稿，提交成功后会自动清除。"}</p> : null}
+        <div className="form-actions">
+          {draftRestored ? (
+            <button type="button" className="ghost" onClick={discardDraft}>
+              <Trash2 size={18} /> 清除草稿
+            </button>
+          ) : null}
+          <button type="button" onClick={saveDraft}>
+            <Save size={18} /> 暂存草稿
+          </button>
+          <button className="primary" type="submit">
+            <CheckCircle2 size={18} /> 提交
+          </button>
+        </div>
+      </form>
+    </AntModal>
+  );
+}
+
 function TaskCompleteDialog({
   state,
   documentTypeOptions,
@@ -3590,6 +4489,7 @@ function closeDetailOnBackdrop(event: MouseEvent<HTMLDivElement>, onClose: () =>
 function RequirementDetailDialog({ requirement, tasks, defects, onClose }: { requirement: Requirement | null; tasks: DevTask[]; defects: Defect[]; onClose: () => void }) {
   if (!requirement) return null;
   const documents = requirement.documents || [];
+  const supplements = [...(requirement.supplements || [])].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   const linkedTasks = tasks.filter((task) => task.requirement?.id === requirement.id);
   const linkedDefects = defects.filter((defect) => defect.task?.requirement?.id === requirement.id || defect.requirement?.id === requirement.id);
   const taskColumns: ColumnsType<DevTask> = [
@@ -3638,6 +4538,48 @@ function RequirementDetailDialog({ requirement, tasks, defects, onClose }: { req
             <DetailRich label="需求描述" value={requirement.description} />
             <DetailRich label="验收标准" value={requirement.acceptanceCriteria} />
             <DetailRich label="时效加分原因" value={requirement.timingBonusReason} />
+          </section>
+          <section>
+            <h3>需求补充</h3>
+            {supplements.length ? (
+              <div className="requirement-supplement-timeline">
+                <AntTimeline
+                  items={supplements.map((supplement: RequirementSupplement) => ({
+                    key: supplement.id,
+                    color: "blue",
+                    children: (
+                      <div className="requirement-supplement-card">
+                        <div className="requirement-supplement-head">
+                          <div>
+                            <strong>{supplement.title || "需求补充"}</strong>
+                            <span>{fmtDateTime(supplement.createdAt)} · {supplement.createdBy?.name || "系统"}</span>
+                          </div>
+                          <Tag>{requirementSupplementTypeLabel(supplement.type)}</Tag>
+                        </div>
+                        {stripRichText(supplement.reason || "").trim() ? (
+                          <div className="requirement-supplement-rich">
+                            <span>补充原因</span>
+                            <RichTextDisplay value={supplement.reason} />
+                          </div>
+                        ) : null}
+                        <div className="requirement-supplement-rich">
+                          <span>补充内容</span>
+                          <RichTextDisplay value={supplement.content} />
+                        </div>
+                        {stripRichText(supplement.impactScope || "").trim() ? (
+                          <div className="requirement-supplement-rich">
+                            <span>影响范围/处理建议</span>
+                            <RichTextDisplay value={supplement.impactScope} />
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  }))}
+                />
+              </div>
+            ) : (
+              <EmptyState text="暂无需求补充记录" />
+            )}
           </section>
           <section>
             <h3>评审信息</h3>

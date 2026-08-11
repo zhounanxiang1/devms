@@ -59,4 +59,9 @@ export class AdminController {
   updateDefectPriority(@Req() req: AuthedRequest, @Body() body: any) {
     return this.core.updateDefectPriority(req.user, body);
   }
+
+  @Post("board-rule-config")
+  updateBoardRuleConfig(@Req() req: AuthedRequest, @Body() body: any) {
+    return this.core.updateBoardRuleConfig(req.user, body);
+  }
 }

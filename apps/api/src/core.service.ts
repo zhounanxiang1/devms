@@ -47,8 +47,25 @@ const REQUIREMENT_TYPE_CODE_MAP: Record<string, string> = {
 const QUALITY_POSITIONS = [PRODUCT_MANAGER, TEST];
 const TASK_CREATOR_POSITIONS = [PRODUCT_MANAGER, "UI", "FRONTEND", "BACKEND", "DATA", "OPS"];
 const TERMINAL_VERSION_STATUSES: VersionStatus[] = [VersionStatus.RELEASED, VersionStatus.ROLLED_BACK, VersionStatus.CANCELED];
+const REQUIREMENT_SUPPLEMENT_ALLOWED_STATUSES: RequirementStatus[] = [
+  RequirementStatus.TO_REVIEW,
+  RequirementStatus.APPROVED,
+  RequirementStatus.REJECTED,
+  RequirementStatus.NEEDS_SUPPLEMENT,
+  RequirementStatus.DEFERRED,
+  RequirementStatus.DEVELOPING
+];
 const TASK_OWNER_EDITABLE_STATUSES: TaskStatus[] = [TaskStatus.TODO, TaskStatus.DOING];
 const DEFECT_OWNER_EDITABLE_STATUSES: DefectStatus[] = [DefectStatus.TO_FIX, DefectStatus.FIXING];
+const DEFAULT_BOARD_RULE_CONFIG = {
+  id: 1,
+  dueSoonDays: 2,
+  normalLoadLimit: 5,
+  saturatedLoadLimit: 10,
+  staleProjectDays: 7,
+  highPriorityThreshold: 40,
+  includeClosedItems: false
+};
 
 function normalizeDefectEnvironment(value?: unknown) {
   return String(value || "OFFLINE").toUpperCase() === "ONLINE" ? "ONLINE" : "OFFLINE";
@@ -66,6 +83,24 @@ function requirementTypeCode(value?: unknown) {
 function startOfToday() {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function toNonNegativeNumber(value: unknown, fallback: number) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, parsed);
+}
+
+function richTextPlain(value: unknown) {
+  return String(value || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 @Injectable()
@@ -487,6 +522,7 @@ export class CoreService {
             submitter: true,
             pmAcceptor: true,
             uiAcceptor: true,
+            supplements: { include: { createdBy: true }, orderBy: { createdAt: "desc" } },
             documents: { include: { document: { include: { createdBy: true } } } },
             _count: { select: { tasks: true, changes: true, documents: true } }
           },
@@ -633,7 +669,16 @@ export class CoreService {
   async listRequirements(projectId?: number) {
     return this.prisma.requirement.findMany({
       where: projectId ? { projectId } : {},
-      include: { project: true, owner: true, submitter: true, pmAcceptor: true, uiAcceptor: true, documents: { include: { document: { include: { createdBy: true } } } }, _count: { select: { tasks: true, changes: true, documents: true } } },
+      include: {
+        project: true,
+        owner: true,
+        submitter: true,
+        pmAcceptor: true,
+        uiAcceptor: true,
+        supplements: { include: { createdBy: true }, orderBy: { createdAt: "desc" } },
+        documents: { include: { document: { include: { createdBy: true } } } },
+        _count: { select: { tasks: true, changes: true, documents: true } }
+      },
       orderBy: [{ priorityScore: "desc" }, { updatedAt: "desc" }]
     });
   }
@@ -728,6 +773,42 @@ export class CoreService {
     });
     await this.log({ user, entityType: "REQUIREMENT", entityId: id, projectId: requirement.projectId, requirementId: id, action: "REVIEW", summary: `填写评审结论：${body.conclusion}`, beforeJson: before, afterJson: requirement });
     return requirement;
+  }
+
+  async supplementRequirement(user: AuthUser, id: number, body: any) {
+    requireAnyPosition(user, [PRODUCT_MANAGER], "只有产品经理可以补充需求说明");
+    const requirement = await this.prisma.requirement.findUnique({ where: { id } });
+    if (!requirement) throw new NotFoundException("需求不存在");
+    if (!REQUIREMENT_SUPPLEMENT_ALLOWED_STATUSES.includes(requirement.status)) {
+      throw new BadRequestException("只有已完成之前的需求状态可以补充需求说明");
+    }
+    const title = String(body.title || "").trim();
+    const content = String(body.content || "").trim();
+    if (!title) throw new BadRequestException("补充标题必填");
+    if (!richTextPlain(content)) throw new BadRequestException("补充内容必填");
+    const supplement = await this.prisma.requirementSupplement.create({
+      data: {
+        requirementId: requirement.id,
+        type: body.type || "DETAIL",
+        title,
+        reason: body.reason,
+        content,
+        impactScope: body.impactScope,
+        createdById: user.personId
+      },
+      include: { createdBy: true }
+    });
+    await this.log({
+      user,
+      entityType: "REQUIREMENT_SUPPLEMENT",
+      entityId: supplement.id,
+      projectId: requirement.projectId,
+      requirementId: requirement.id,
+      action: "CREATE",
+      summary: `补充需求说明：${title}`,
+      afterJson: supplement
+    });
+    return supplement;
   }
 
   async acceptRequirement(user: AuthUser, id: number, body: any) {
@@ -1440,8 +1521,16 @@ export class CoreService {
     return document;
   }
 
+  async boardRuleConfig() {
+    return this.prisma.boardRuleConfig.upsert({
+      where: { id: DEFAULT_BOARD_RULE_CONFIG.id },
+      create: DEFAULT_BOARD_RULE_CONFIG,
+      update: {}
+    });
+  }
+
   async adminBootstrap() {
-    const [positions, organizations, people, accounts, dictionaries, requirementPriorities, defectPriorities, logs] = await Promise.all([
+    const [positions, organizations, people, accounts, dictionaries, requirementPriorities, defectPriorities, boardRuleConfig, logs] = await Promise.all([
       this.prisma.position.findMany({ orderBy: { id: "asc" } }),
       this.prisma.organization.findMany({ orderBy: [{ parentId: "asc" }, { sort: "asc" }] }),
       this.prisma.person.findMany({ include: includePerson, orderBy: { id: "asc" } }),
@@ -1466,9 +1555,10 @@ export class CoreService {
       this.prisma.dictionary.findMany({ orderBy: [{ type: "asc" }, { sort: "asc" }] }),
       this.prisma.requirementPriority.findMany({ orderBy: { sort: "asc" } }),
       this.prisma.defectPriority.findMany({ orderBy: { sort: "asc" } }),
+      this.boardRuleConfig(),
       this.prisma.activityLog.findMany({ include: { actor: true }, take: 50, orderBy: { createdAt: "desc" } })
     ]);
-    return { positions, organizations, people, accounts, dictionaries, requirementPriorities, defectPriorities, logs };
+    return { positions, organizations, people, accounts, dictionaries, requirementPriorities, defectPriorities, boardRuleConfig, logs };
   }
 
   async listAssignablePeople() {
@@ -1714,6 +1804,32 @@ export class CoreService {
     });
     await this.log({ user, entityType: "PRIORITY", entityId: priority.id, action: "UPDATE", summary: `更新缺陷分值：${priority.name}` });
     return priority;
+  }
+
+  async updateBoardRuleConfig(user: AuthUser, body: any) {
+    requireAnyPosition(user, [PRODUCT_MANAGER], "只有产品经理可以维护看板规则");
+    const config = await this.prisma.boardRuleConfig.upsert({
+      where: { id: DEFAULT_BOARD_RULE_CONFIG.id },
+      create: {
+        id: DEFAULT_BOARD_RULE_CONFIG.id,
+        dueSoonDays: Math.round(toNonNegativeNumber(body.dueSoonDays, DEFAULT_BOARD_RULE_CONFIG.dueSoonDays)),
+        normalLoadLimit: Math.round(toNonNegativeNumber(body.normalLoadLimit, DEFAULT_BOARD_RULE_CONFIG.normalLoadLimit)),
+        saturatedLoadLimit: Math.round(toNonNegativeNumber(body.saturatedLoadLimit, DEFAULT_BOARD_RULE_CONFIG.saturatedLoadLimit)),
+        staleProjectDays: Math.round(toNonNegativeNumber(body.staleProjectDays, DEFAULT_BOARD_RULE_CONFIG.staleProjectDays)),
+        highPriorityThreshold: toNonNegativeNumber(body.highPriorityThreshold, DEFAULT_BOARD_RULE_CONFIG.highPriorityThreshold),
+        includeClosedItems: toBool(body.includeClosedItems) ?? DEFAULT_BOARD_RULE_CONFIG.includeClosedItems
+      },
+      update: {
+        dueSoonDays: Math.round(toNonNegativeNumber(body.dueSoonDays, DEFAULT_BOARD_RULE_CONFIG.dueSoonDays)),
+        normalLoadLimit: Math.round(toNonNegativeNumber(body.normalLoadLimit, DEFAULT_BOARD_RULE_CONFIG.normalLoadLimit)),
+        saturatedLoadLimit: Math.round(toNonNegativeNumber(body.saturatedLoadLimit, DEFAULT_BOARD_RULE_CONFIG.saturatedLoadLimit)),
+        staleProjectDays: Math.round(toNonNegativeNumber(body.staleProjectDays, DEFAULT_BOARD_RULE_CONFIG.staleProjectDays)),
+        highPriorityThreshold: toNonNegativeNumber(body.highPriorityThreshold, DEFAULT_BOARD_RULE_CONFIG.highPriorityThreshold),
+        includeClosedItems: toBool(body.includeClosedItems) ?? DEFAULT_BOARD_RULE_CONFIG.includeClosedItems
+      }
+    });
+    await this.log({ user, entityType: "BOARD_RULE_CONFIG", entityId: config.id, action: "UPDATE", summary: "更新看板规则配置" });
+    return config;
   }
 
   async recalculateDefectsForRequirement(requirementId: number) {
