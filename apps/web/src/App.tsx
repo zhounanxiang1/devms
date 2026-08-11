@@ -20,6 +20,7 @@ import type { ComponentType } from "react";
 import { api, clearToken, getToken, patch, post, setToken } from "./api";
 import { AssigneeScheduleDialog, ScheduleChange } from "./components/AssigneeScheduleDialog";
 import { Badge, EmptyState, ListSection, Metric } from "./components/common";
+import { DocumentRelationSelector } from "./components/DocumentRelationSelector";
 import { DisplayField, Field, FileField, PeopleSelect, ProjectSelect, ReadonlyField, Select, Textarea } from "./components/formControls";
 import { ProjectLifecycleAction, ProjectLifecycleDialog } from "./components/ProjectLifecycleDialog";
 import { ResizableTable as AntTable } from "./components/ResizableTable";
@@ -30,7 +31,8 @@ import { clearFormDraft, draftArray, draftValue, FORM_DRAFT_PREFIX, hasDraftValu
 import { dictionaryOptions, dictionaryTypeLabel, dictionaryTypeUsage, fmtDate, isDue, isProductManagerPerson, label, projectStageLabel, toDateInput, todayDateInput } from "./lib/format";
 import { dictionaryTypeMeta } from "./lib/labels";
 import { stripRichText } from "./lib/richText";
-import { Account, AdminData, AuthState, BoardRuleConfig, Defect, DevTask, Organization, Person, Position, Project, ReleaseVersion, Requirement, RequirementSupplement } from "./types";
+import { validateScheduleWithinProjectPlan } from "./lib/schedule";
+import { Account, AdminData, AuthState, BoardRuleConfig, Defect, DevTask, Organization, Person, Position, Project, ProjectDocument, ReleaseVersion, Requirement, RequirementSupplement } from "./types";
 
 type View = "workbench" | "dashboard" | "projects" | "admin";
 type DrawerKind = "project" | "requirement" | "task" | "defect" | "version" | "document" | "person" | null;
@@ -72,6 +74,14 @@ function hasAssignedPerson(item: { assigneeId?: number | null; assignee?: Person
 function isAssignedToPerson(item: { assigneeId?: number | null; assignee?: Person }, personId?: number | null) {
   const assigneeId = item.assigneeId ?? item.assignee?.id;
   return Boolean(personId && assigneeId && assigneeId === personId);
+}
+
+function scheduleProjectForItem(item?: DevTask | Defect | null) {
+  if (!item) return null;
+  if ("level" in item) {
+    return item.project || item.task?.project || item.task?.requirement?.project || item.requirement?.project || null;
+  }
+  return item.project || item.requirement?.project || null;
 }
 
 function hasAssignedTester(item: { testerId?: number | null; tester?: Person }) {
@@ -156,6 +166,7 @@ export function App() {
   const [tasks, setTasks] = useState<DevTask[]>([]);
   const [defects, setDefects] = useState<Defect[]>([]);
   const [versions, setVersions] = useState<ReleaseVersion[]>([]);
+  const [documents, setDocuments] = useState<ProjectDocument[]>([]);
   const [admin, setAdmin] = useState<AdminData | null>(null);
   const [peopleDirectory, setPeopleDirectory] = useState<Person[]>([]);
   const [adminEdit, setAdminEdit] = useState<AdminEditState>(null);
@@ -249,13 +260,14 @@ export function App() {
     }
 
     if (target === "all") {
-      const [wb, ps, reqs, ts, bugs, vers, people] = await Promise.all([
+      const [wb, ps, reqs, ts, bugs, vers, docs, people] = await Promise.all([
         load<any>("/workbench"),
         load<Project[]>("/projects"),
         load<Requirement[]>("/requirements"),
         load<DevTask[]>("/tasks"),
         load<Defect[]>("/defects"),
         load<ReleaseVersion[]>("/versions"),
+        load<ProjectDocument[]>("/documents"),
         load<Person[]>("/admin/people")
       ]);
       if (wb.ok) setWorkbench(wb.value);
@@ -264,27 +276,30 @@ export function App() {
       if (ts.ok) setTasks(ts.value);
       if (bugs.ok) setDefects(bugs.value);
       if (vers.ok) setVersions(vers.value);
+      if (docs.ok) setDocuments(docs.value);
       if (people.ok) setPeopleDirectory(people.value);
-      showPartialLoadError([wb, ps, reqs, ts, bugs, vers, people]);
+      showPartialLoadError([wb, ps, reqs, ts, bugs, vers, docs, people]);
       const nextProjectId = currentProjectId || (ps.ok ? ps.value[0]?.id : projects[0]?.id) || null;
       if (!currentProjectId && nextProjectId) setSelectedProjectId(nextProjectId);
       await Promise.all([refreshAdminData(), refreshSelectedProjectDetail(nextProjectId)]);
       return;
     }
     if (target === "project") {
-      const [ps, reqs, ts, bugs, wb] = await Promise.all([
+      const [ps, reqs, ts, bugs, docs, wb] = await Promise.all([
         load<Project[]>("/projects"),
         load<Requirement[]>("/requirements"),
         load<DevTask[]>("/tasks"),
         load<Defect[]>("/defects"),
+        load<ProjectDocument[]>("/documents"),
         load<any>("/workbench")
       ]);
       if (ps.ok) setProjects(ps.value);
       if (reqs.ok) setRequirements(reqs.value);
       if (ts.ok) setTasks(ts.value);
       if (bugs.ok) setDefects(bugs.value);
+      if (docs.ok) setDocuments(docs.value);
       if (wb.ok) setWorkbench(wb.value);
-      showPartialLoadError([ps, reqs, ts, bugs, wb]);
+      showPartialLoadError([ps, reqs, ts, bugs, docs, wb]);
       const nextProjectId = currentProjectId || (ps.ok ? ps.value[0]?.id : projects[0]?.id) || null;
       if (!currentProjectId && nextProjectId) setSelectedProjectId(nextProjectId);
       await refreshSelectedProjectDetail(nextProjectId);
@@ -373,11 +388,12 @@ export function App() {
     setError("");
     try {
       const created = await post<Project>("/projects", body);
-      const [ps, reqs, ts, bugs, wb] = await Promise.all([
+      const [ps, reqs, ts, bugs, docs, wb] = await Promise.all([
         api<Project[]>("/projects"),
         api<Requirement[]>("/requirements"),
         api<DevTask[]>("/tasks"),
         api<Defect[]>("/defects"),
+        api<ProjectDocument[]>("/documents"),
         api<any>("/workbench")
       ]);
       const nextProjectId = created?.id || ps[0]?.id || null;
@@ -386,6 +402,7 @@ export function App() {
       setRequirements(reqs);
       setTasks(ts);
       setDefects(bugs);
+      setDocuments(docs);
       setWorkbench(wb);
       setSelectedProjectId(nextProjectId);
       setProjectDetail(detail);
@@ -434,6 +451,19 @@ export function App() {
       });
       if (hasInvalidScheduleStatus) {
         setError("只有待处理/处理中的开发任务、待修复/修复中的缺陷可以调整排期");
+        return false;
+      }
+      const invalidProjectPlanMessage = changes
+        .map((change) => {
+          const item = change.kind === "task" ? tasks.find((task) => task.id === change.id) : defects.find((defect) => defect.id === change.id);
+          return validateScheduleWithinProjectPlan(scheduleProjectForItem(item), {
+            plannedStartDate: change.plannedStartDate,
+            plannedFinishDate: change.plannedFinishDate
+          });
+        })
+        .find(Boolean);
+      if (invalidProjectPlanMessage) {
+        setError(invalidProjectPlanMessage);
         return false;
       }
       await Promise.all(
@@ -710,6 +740,14 @@ export function App() {
         state={scheduleEdit}
         onClose={() => setScheduleEdit(null)}
         onSubmit={async (state, body) => {
+          const validationMessage = validateScheduleWithinProjectPlan(scheduleProjectForItem(state.item), {
+            plannedStartDate: typeof body.plannedStartDate === "string" ? body.plannedStartDate : undefined,
+            plannedFinishDate: typeof body.plannedFinishDate === "string" ? body.plannedFinishDate : undefined
+          });
+          if (validationMessage) {
+            setError(validationMessage);
+            return false;
+          }
           const path = state.type === "task" ? `/tasks/${state.item.id}` : `/defects/${state.item.id}`;
           const success = await handleAction(() => patch(path, body), "execution");
           if (success) setScheduleEdit(null);
@@ -733,7 +771,7 @@ export function App() {
       <TaskDetailDialog task={taskDetail} onClose={() => setTaskDetail(null)} />
       <TaskCompleteDialog
         state={taskComplete}
-        documentTypeOptions={dictionaryOptions(admin?.dictionaries || [], "DOCUMENT_TYPE", [["BUSINESS", "业务资料"], ["TECH", "技术资料"], ["TEST", "测试资料"], ["RELEASE", "上线资料"]])}
+        documents={documents}
         onClose={() => setTaskComplete(null)}
         onSubmit={async (task, body, refreshTarget) => {
           const success = await handleAction(() => post(`/tasks/${task.id}/complete`, body), refreshTarget);
@@ -774,6 +812,7 @@ export function App() {
         requirements={requirements}
         tasks={tasks}
         defects={defects}
+        documents={documents}
         people={availablePeople}
         positions={availablePositions}
         dictionaries={admin?.dictionaries || []}
@@ -4373,12 +4412,12 @@ function RequirementSupplementDialog({
 
 function TaskCompleteDialog({
   state,
-  documentTypeOptions,
+  documents,
   onClose,
   onSubmit
 }: {
   state: TaskCompleteState;
-  documentTypeOptions: Array<[string, string]>;
+  documents: ProjectDocument[];
   onClose: () => void;
   onSubmit: (task: DevTask, body: any, refreshTarget: RefreshTarget) => Promise<boolean>;
 }) {
@@ -4394,6 +4433,7 @@ function TaskCompleteDialog({
   if (!task || !state) return null;
   const activeTask = task;
   const activeRefreshTarget = state.refreshTarget;
+  const taskProjectId = activeTask.project?.id || activeTask.projectId || activeTask.requirement?.projectId;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -4407,9 +4447,7 @@ function TaskCompleteDialog({
     const form = new FormData(formElement);
     let body: Record<string, any>;
     try {
-      body = await formDataToBody(form, {
-        documentAttachmentFile: { urlKey: "documentAttachmentUrl", nameKey: "documentAttachmentFileName" }
-      });
+      body = await formDataToBody(form);
     } catch (err: any) {
       setDraftMessage(err.message || "附件读取失败");
       return;
@@ -4455,13 +4493,17 @@ function TaskCompleteDialog({
         <RichTextEditor name="completionNote" label="开发说明" required defaultValue={draftValue(draft, "completionNote", activeTask.completionNote)} />
         <div className="form-section-box">
           <div>
-            <strong>开发资料</strong>
-            <span>可同步归档设计说明、接口文档、联调记录等资料，并关联到该开发任务。</span>
+            <strong>关联开发资料</strong>
+            <span>从当前项目资料库中选择已归档的技术资料，关联到该开发任务。</span>
           </div>
-          <Field name="documentName" label="资料名称" defaultValue={draftValue(draft, "documentName")} />
-          <Select name="documentType" label="资料类型" options={documentTypeOptions} defaultValue={draftValue(draft, "documentType", "TECH")} />
-          <RichTextEditor name="documentDescription" label="资料描述" defaultValue={draftValue(draft, "documentDescription")} />
-          <FileField name="documentAttachmentFile" label="上传附件" />
+          <DocumentRelationSelector
+            key={`task-docs-${activeTask.id}:${draftStamp}`}
+            label="关联资料"
+            documents={documents}
+            projectId={taskProjectId}
+            allowedTypes={["TECH"]}
+            defaultValue={draftArray(draft, "documentIds").map(Number).filter(Boolean)}
+          />
         </div>
         {draftMessage || draftRestored ? <p className="draft-hint">{draftMessage || "已恢复上次暂存草稿，提交成功后会自动清除。"}</p> : null}
         <div className="form-actions">
@@ -5280,6 +5322,7 @@ function CreateDrawer({
   requirements,
   tasks,
   defects,
+  documents,
   people,
   positions,
   dictionaries,
@@ -5297,6 +5340,7 @@ function CreateDrawer({
   requirements: Requirement[];
   tasks: DevTask[];
   defects: Defect[];
+  documents: ProjectDocument[];
   people: Person[];
   positions: Array<{ code: string; name: string; isActive?: boolean }>;
   dictionaries: AdminData["dictionaries"];
@@ -5325,6 +5369,7 @@ function CreateDrawer({
   const [versionProjectId, setVersionProjectId] = useState("");
   const [versionRequirementIds, setVersionRequirementIds] = useState<number[]>([]);
   const [versionDefectIds, setVersionDefectIds] = useState<number[]>([]);
+  const [requirementProjectId, setRequirementProjectId] = useState(String(context.projectId || ""));
   const [taskAssigneeId, setTaskAssigneeId] = useState(String(currentPersonId || ""));
   const [taskTitle, setTaskTitle] = useState(String(draftValue(draft, "title", "") || ""));
   const [taskPlannedStartDate, setTaskPlannedStartDate] = useState(String(draftValue(draft, "plannedStartDate", todayDateInput()) || todayDateInput()));
@@ -5358,11 +5403,12 @@ function CreateDrawer({
   }, [kind, draftKey, currentPersonId]);
   useEffect(() => {
     if (kind === "requirement") {
+      setRequirementProjectId(String(draftValue(draft, "projectId", context.projectId || openProjectFallbackId) || ""));
       setRequirementPriorityLevel(String(draftValue(draft, "priorityLevel", sourceRequirementForDraft?.priorityLevel || "P2") || "P2"));
       setRequirementTimingBonus(String(draftValue(draft, "timingBonus", "") ?? ""));
       setRequirementLaunchStatus(String(draftValue(draft, "launchStatus", "TO_RELEASE") || "TO_RELEASE"));
     }
-  }, [kind, draftKey, sourceRequirementForDraft?.priorityLevel]);
+  }, [kind, draftKey, context.projectId, openProjectFallbackId, sourceRequirementForDraft?.priorityLevel]);
   useEffect(() => {
     if (kind === "defect") {
       setDefectTaskId(String(draftValue(draft, "taskId", context.taskId || "") || ""));
@@ -5388,6 +5434,7 @@ function CreateDrawer({
     : selectedTask?.requirement || null;
   const defectEnvironment = selectedRequirement?.launchStatus === "RELEASED" ? "ONLINE" : "OFFLINE";
   const contextProject = editingProject || selectedProject || selectedTask?.project || selectedRequirement?.project || (selectedRequirement?.projectId ? projects.find((project) => project.id === selectedRequirement.projectId) : null);
+  const activeRequirementProjectId = contextProject?.id || Number(requirementProjectId || 0);
   const openProjects = projects.filter((project) => project.stage !== "CLOSED");
   const openProjectIds = new Set(openProjects.map((project) => project.id));
   const selectableProjects = activeDrawerKind === "document" ? projects : openProjects;
@@ -5452,8 +5499,7 @@ function CreateDrawer({
     let body: Record<string, any>;
     try {
       body = await formDataToBody(form, {
-        attachmentFile: { urlKey: "attachmentUrl", nameKey: "attachmentFileName" },
-        documentAttachmentFile: { urlKey: "documentAttachmentUrl", nameKey: "documentAttachmentFileName" }
+        attachmentFile: { urlKey: "attachmentUrl", nameKey: "attachmentFileName" }
       });
     } catch (err: any) {
       setDraftMessage(err.message || "附件读取失败");
@@ -5475,6 +5521,14 @@ function CreateDrawer({
       }
       if (!taskTypeCode) {
         setDraftMessage("负责人未配置岗位，不能创建开发任务。请先在人员管理中维护岗位。");
+        return;
+      }
+      const validationMessage = validateScheduleWithinProjectPlan(contextProject, {
+        plannedStartDate: body.plannedStartDate,
+        plannedFinishDate: body.plannedFinishDate
+      });
+      if (validationMessage) {
+        setDraftMessage(validationMessage);
         return;
       }
     }
@@ -5556,7 +5610,7 @@ function CreateDrawer({
               {contextProject ? (
                 <ReadonlyField name="projectId" label="所属项目" value={contextProject.id} displayValue={`${contextProject.name}（${contextProject.code}）`} />
               ) : (
-                <ProjectSelect projects={selectableProjects} defaultValue={draftValue(draft, "projectId")} />
+                <Select searchable name="projectId" label="所属项目" options={selectableProjects.map((project) => [String(project.id), `${project.name}（${project.code}）`])} value={requirementProjectId} onChange={setRequirementProjectId} />
               )}
               {context.revisionMode ? (
                 <Select name="launchStatus" label="上线状态" options={requirementLaunchStatusOptions} value={requirementLaunchStatus} onChange={setRequirementLaunchStatus} />
@@ -5571,12 +5625,16 @@ function CreateDrawer({
               <div className="form-section-box">
                 <div>
                   <strong>关联资料</strong>
-                  <span>可在创建需求时同步归档一份资料，并自动关联到该需求。</span>
+                  <span>从当前项目资料库中选择已归档的业务资料，关联到该需求。</span>
                 </div>
-                <Field name="documentName" label="资料名称" defaultValue={draftValue(draft, "documentName")} />
-                <Select name="documentType" label="资料类型" options={documentTypeOptions} defaultValue={draftValue(draft, "documentType", "BUSINESS")} />
-                <RichTextEditor name="documentDescription" label="资料描述" defaultValue={draftValue(draft, "documentDescription")} />
-                <FileField name="documentAttachmentFile" label="上传附件" />
+                <DocumentRelationSelector
+                  key={`requirement-docs-${activeRequirementProjectId}:${draftStamp}`}
+                  label="关联资料"
+                  documents={documents}
+                  projectId={activeRequirementProjectId}
+                  allowedTypes={["BUSINESS"]}
+                  defaultValue={draftArray(draft, "documentIds").map(Number).filter(Boolean)}
+                />
               </div>
             </>
           ) : null}
@@ -5697,6 +5755,8 @@ function CreateDrawer({
           draftItem={{
             title: taskTitle || "当前新建任务",
             projectName: contextProject?.name || "-",
+            projectPlannedStartDate: contextProject?.plannedStartDate,
+            projectPlannedEndDate: contextProject?.plannedEndDate,
             sourceName: selectedRequirement?.title || "-",
             priorityScore: selectedRequirement?.priorityScore || 0,
             plannedStartDate: taskPlannedStartDate,

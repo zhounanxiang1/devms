@@ -43,6 +43,12 @@ const REQUIREMENT_TYPE_CODE_MAP: Record<string, string> = {
   UX: "UX",
   NON_FUNCTIONAL: "NF"
 };
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  BUSINESS: "业务资料",
+  TECH: "技术资料",
+  TEST: "测试资料",
+  RELEASE: "上线资料"
+};
 
 const QUALITY_POSITIONS = [PRODUCT_MANAGER, TEST];
 const TASK_CREATOR_POSITIONS = [PRODUCT_MANAGER, "UI", "FRONTEND", "BACKEND", "DATA", "OPS"];
@@ -278,6 +284,35 @@ export class CoreService {
     return project;
   }
 
+  private dateOnly(value?: Date | null) {
+    if (!value) return undefined;
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+
+  private assertScheduleWithinProjectPlan(
+    project: { plannedStartDate?: Date | null; plannedEndDate?: Date | null; name?: string | null },
+    plannedStartDate?: Date | null,
+    plannedFinishDate?: Date | null
+  ) {
+    const start = this.dateOnly(plannedStartDate);
+    const finish = this.dateOnly(plannedFinishDate);
+    if (!start && !finish) return;
+    const projectStart = this.dateOnly(project.plannedStartDate);
+    const projectEnd = this.dateOnly(project.plannedEndDate);
+    if (projectStart && projectEnd && projectStart.getTime() > projectEnd.getTime()) {
+      throw new BadRequestException("项目计划周期异常，计划开始时间不能晚于计划结束时间");
+    }
+    if (start && finish && start.getTime() > finish.getTime()) {
+      throw new BadRequestException("计划开始时间不能晚于计划完成时间");
+    }
+    if (projectStart && [start, finish].some((date) => date && date.getTime() < projectStart.getTime())) {
+      throw new BadRequestException("开发排期不能早于项目计划开始时间");
+    }
+    if (projectEnd && [start, finish].some((date) => date && date.getTime() > projectEnd.getTime())) {
+      throw new BadRequestException("开发排期不能晚于项目计划结束时间");
+    }
+  }
+
   private async setProjectStage(user: AuthUser, projectId: number, targetStage: ProjectStage, summary: string) {
     const project = await this.prisma.project.findUnique({ where: { id: projectId } });
     if (!project || project.stage === ProjectStage.CLOSED) return;
@@ -299,69 +334,70 @@ export class CoreService {
   }
 
   private toNumberIds(values: unknown) {
-    return Array.isArray(values) ? values.map(Number).filter(Number.isFinite) : [];
+    if (values === undefined || values === null || values === "") return [];
+    const source = Array.isArray(values) ? values : [values];
+    return Array.from(new Set(source.map(Number).filter(Number.isFinite)));
   }
 
-  private async createLinkedRequirementDocument(
+  private async assertProjectDocuments(
     tx: Prisma.TransactionClient,
-    user: AuthUser,
-    requirement: { id: number; projectId: number; title: string },
+    projectId: number,
+    documentIds: number[],
+    allowedTypes: string[],
+    actionLabel: string
+  ) {
+    if (!documentIds.length) return [];
+    const documents = await tx.projectDocument.findMany({
+      where: { id: { in: documentIds } },
+      select: { id: true, name: true, projectId: true, type: true }
+    });
+    const foundIds = new Set(documents.map((document) => document.id));
+    const invalidDocuments = [
+      ...documentIds.filter((documentId) => !foundIds.has(documentId)).map((documentId) => ({ id: documentId, name: "资料不存在" })),
+      ...documents.filter((document) => document.projectId !== projectId || !allowedTypes.includes(document.type))
+    ];
+    if (invalidDocuments.length) {
+      const allowedTypeText = allowedTypes.map((type) => DOCUMENT_TYPE_LABELS[type] || type).join("、");
+      throw new BadRequestException({
+        message: `${actionLabel}只能关联当前项目下的${allowedTypeText}`,
+        invalidDocuments
+      });
+    }
+    return documents;
+  }
+
+  private async linkExistingRequirementDocuments(
+    tx: Prisma.TransactionClient,
+    requirement: { id: number; projectId: number },
     body: any
   ) {
-    const hasDocument =
-      Boolean(String(body.documentName || "").trim()) ||
-      Boolean(String(body.documentDescription || "").trim()) ||
-      Boolean(String(body.documentAttachmentUrl || "").trim()) ||
-      Boolean(String(body.documentAttachmentFileName || "").trim());
-    if (!hasDocument) return null;
-    const document = await tx.projectDocument.create({
-      data: {
-        projectId: requirement.projectId,
-        name: String(body.documentName || body.documentAttachmentFileName || `${requirement.title}资料`).trim(),
-        type: body.documentType || "BUSINESS",
-        description: body.documentDescription,
-        attachmentUrl: body.documentAttachmentUrl,
-        createdById: user.personId
-      }
-    });
-    await tx.requirementDocument.create({
-      data: {
+    const documents = await this.assertProjectDocuments(tx, requirement.projectId, this.toNumberIds(body.documentIds), ["BUSINESS"], "需求");
+    if (!documents.length) return [];
+    await tx.requirementDocument.createMany({
+      data: documents.map((document) => ({
         requirementId: requirement.id,
         documentId: document.id
-      }
+      })),
+      skipDuplicates: true
     });
-    return document;
+    return documents;
   }
 
-  private async createLinkedTaskDocument(
+  private async linkExistingTaskDocuments(
     tx: Prisma.TransactionClient,
-    user: AuthUser,
-    task: { id: number; projectId: number; title: string },
+    task: { id: number; projectId: number },
     body: any
   ) {
-    const hasDocument =
-      Boolean(String(body.documentName || "").trim()) ||
-      Boolean(String(body.documentDescription || "").trim()) ||
-      Boolean(String(body.documentAttachmentUrl || "").trim()) ||
-      Boolean(String(body.documentAttachmentFileName || "").trim());
-    if (!hasDocument) return null;
-    const document = await tx.projectDocument.create({
-      data: {
-        projectId: task.projectId,
-        name: String(body.documentName || body.documentAttachmentFileName || `${task.title}开发资料`).trim(),
-        type: body.documentType || "TECH",
-        description: body.documentDescription,
-        attachmentUrl: body.documentAttachmentUrl,
-        createdById: user.personId
-      }
-    });
-    await tx.taskDocument.create({
-      data: {
+    const documents = await this.assertProjectDocuments(tx, task.projectId, this.toNumberIds(body.documentIds), ["TECH"], "开发任务");
+    if (!documents.length) return [];
+    await tx.taskDocument.createMany({
+      data: documents.map((document) => ({
         taskId: task.id,
         documentId: document.id
-      }
+      })),
+      skipDuplicates: true
     });
-    return document;
+    return documents;
   }
 
   private async assertVersionScope(projectId: number, requirementIds: number[], defectIds: number[]) {
@@ -708,7 +744,7 @@ export class CoreService {
           submitterId: user.personId
         }
       });
-      await this.createLinkedRequirementDocument(tx, user, created, body);
+      await this.linkExistingRequirementDocuments(tx, created, body);
       return created;
     });
     await this.log({ user, entityType: "REQUIREMENT", entityId: requirement.id, projectId: requirement.projectId, requirementId: requirement.id, action: "CREATE", summary: `创建需求：${requirement.title}` });
@@ -940,7 +976,7 @@ export class CoreService {
           optimizationSourceId: original.id
         }
       });
-      await this.createLinkedRequirementDocument(tx, user, created, body);
+      await this.linkExistingRequirementDocuments(tx, created, body);
       return created;
     });
 
@@ -983,7 +1019,7 @@ export class CoreService {
 
   async createTask(user: AuthUser, body: any) {
     requireAnyPosition(user, TASK_CREATOR_POSITIONS, "当前岗位不能创建开发任务");
-    const requirement = await this.prisma.requirement.findUnique({ where: { id: Number(body.requirementId) } });
+    const requirement = await this.prisma.requirement.findUnique({ where: { id: Number(body.requirementId) }, include: { project: true } });
     if (requirement && requirement.status !== RequirementStatus.APPROVED && requirement.status !== RequirementStatus.DEVELOPING) {
       throw new BadRequestException("只有评审通过或开发中的需求可以创建任务");
     }
@@ -993,6 +1029,9 @@ export class CoreService {
     const testerId = await this.ensureTester(this.requirePersonId(body.testerId, "任务测试负责人必填"));
     const taskType = await this.taskTypeForAssignee(assigneeId);
     const taskCode = await this.nextBusinessCode("TASK");
+    const plannedStartDate = toDate(body.plannedStartDate) || startOfToday();
+    const plannedFinishDate = toDate(body.plannedFinishDate);
+    this.assertScheduleWithinProjectPlan(requirement.project, plannedStartDate, plannedFinishDate);
     const task = await this.prisma.devTask.create({
       data: {
         code: taskCode,
@@ -1004,8 +1043,8 @@ export class CoreService {
         assigneeId,
         testerId,
         createdById: user.personId,
-        plannedStartDate: toDate(body.plannedStartDate) || startOfToday(),
-        plannedFinishDate: toDate(body.plannedFinishDate),
+        plannedStartDate,
+        plannedFinishDate,
         priorityScore: requirement.priorityScore
       }
     });
@@ -1017,11 +1056,16 @@ export class CoreService {
   }
 
   async updateTask(user: AuthUser, id: number, body: any) {
-    const before = await this.prisma.devTask.findUnique({ where: { id } });
+    const before = await this.prisma.devTask.findUnique({ where: { id }, include: { project: true } });
     if (!before) throw new NotFoundException("任务不存在");
     this.requireAssignee(user, before, "只能维护自己负责的开发任务");
     if (this.hasTaskScheduleChange(body) && !TASK_OWNER_EDITABLE_STATUSES.includes(before.status)) {
       throw new BadRequestException("只有待处理或处理中的任务可以调整排期");
+    }
+    const plannedStartDate = body.plannedStartDate === undefined ? before.plannedStartDate : toDate(body.plannedStartDate);
+    const plannedFinishDate = body.plannedFinishDate === undefined ? before.plannedFinishDate : toDate(body.plannedFinishDate);
+    if (this.hasTaskScheduleChange(body)) {
+      this.assertScheduleWithinProjectPlan(before.project, plannedStartDate, plannedFinishDate);
     }
     const assigneeId = body.assigneeId === undefined ? undefined : this.requirePersonId(body.assigneeId, "任务负责人必填");
     const testerId = body.testerId === undefined ? undefined : await this.ensureTester(this.requirePersonId(body.testerId, "任务测试负责人必填"));
@@ -1034,8 +1078,8 @@ export class CoreService {
         status: body.status,
         assigneeId,
         testerId,
-        plannedStartDate: toDate(body.plannedStartDate),
-        plannedFinishDate: toDate(body.plannedFinishDate),
+        plannedStartDate: body.plannedStartDate === undefined ? undefined : plannedStartDate,
+        plannedFinishDate: body.plannedFinishDate === undefined ? undefined : plannedFinishDate,
         blockedReason: body.blockedReason
       })
     });
@@ -1070,7 +1114,7 @@ export class CoreService {
           completionNote: body.completionNote
         }
       });
-      await this.createLinkedTaskDocument(tx, user, updated, body);
+      await this.linkExistingTaskDocuments(tx, updated, body);
       return updated;
     });
     await this.log({ user, entityType: "TASK", entityId: id, projectId: task.projectId, requirementId: task.requirementId, taskId: id, action: "COMPLETE", summary: `任务提交测试：${task.title}` });
@@ -1203,7 +1247,7 @@ export class CoreService {
   }
 
   async updateDefect(user: AuthUser, id: number, body: any) {
-    const before = await this.prisma.defect.findUnique({ where: { id } });
+    const before = await this.prisma.defect.findUnique({ where: { id }, include: { project: true } });
     if (!before) throw new NotFoundException("缺陷不存在");
     this.requireAssignee(user, before, "只能维护自己负责修复的缺陷");
     if (this.hasDefectScheduleChange(body) && !DEFECT_OWNER_EDITABLE_STATUSES.includes(before.status)) {
@@ -1212,8 +1256,16 @@ export class CoreService {
     const assigneeId = body.assigneeId === undefined ? before.assigneeId : this.requirePersonId(body.assigneeId, "缺陷修复负责人必填");
     const testerId = body.testerId === undefined ? undefined : await this.ensureQualityOwner(this.requirePersonId(body.testerId, "缺陷测试负责人必填"));
     const taskId = body.taskId === undefined ? before.taskId : Number(body.taskId);
-    const task = await this.prisma.devTask.findUnique({ where: { id: taskId }, include: { requirement: true } });
+    const task = await this.prisma.devTask.findUnique({ where: { id: taskId }, include: { requirement: true, project: true } });
     if (!task) throw new NotFoundException("任务不存在");
+    const plannedStartDate = body.plannedStartDate === undefined ? before.plannedStartDate || before.plannedFixDate : toDate(body.plannedStartDate);
+    const plannedFinishDate =
+      body.plannedFinishDate === undefined && body.plannedFixDate === undefined
+        ? before.plannedFinishDate || before.plannedFixDate
+        : toDate(body.plannedFinishDate) || toDate(body.plannedFixDate);
+    if (this.hasDefectScheduleChange(body)) {
+      this.assertScheduleWithinProjectPlan(task.project || before.project, plannedStartDate, plannedFinishDate);
+    }
     const environment = body.environment === undefined ? undefined : normalizeDefectEnvironment(body.environment);
     if (environment === "ONLINE" && task.requirement?.launchStatus !== RequirementLaunchStatus.RELEASED) {
       throw new BadRequestException("只有已上线需求才能登记线上缺陷");
@@ -1247,9 +1299,9 @@ export class CoreService {
         testData: body.testData,
         environment,
         attachmentUrl: body.attachmentUrl,
-        plannedStartDate: toDate(body.plannedStartDate),
-        plannedFinishDate: toDate(body.plannedFinishDate) || toDate(body.plannedFixDate),
-        plannedFixDate: toDate(body.plannedFinishDate) || toDate(body.plannedFixDate),
+        plannedStartDate: body.plannedStartDate === undefined ? undefined : plannedStartDate,
+        plannedFinishDate: body.plannedFinishDate === undefined && body.plannedFixDate === undefined ? undefined : plannedFinishDate,
+        plannedFixDate: body.plannedFinishDate === undefined && body.plannedFixDate === undefined ? undefined : plannedFinishDate,
         timingBonus: body.timingBonus === undefined ? undefined : Number(body.timingBonus),
         timingBonusReason: body.timingBonusReason,
         priorityScore

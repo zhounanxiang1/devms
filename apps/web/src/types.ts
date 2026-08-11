@@ -83,6 +83,7 @@ export type Project = {
 
 export type ProjectDocument = {
   id: number;
+  projectId?: number;
   name: string;
   type: string;
   description?: string | null;
@@ -148,6 +149,8 @@ export type DevTask = {
   id: number;
   code: string;
   title: string;
+  projectId?: number;
+  requirementId?: number;
   type: string;
   status: string;
   priorityScore: number;

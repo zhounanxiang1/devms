@@ -2012,9 +2012,14 @@ select[multiple] {
 }
 
 .form-section-box > div:first-child span,
-.file-field-note {
+.file-field-note,
+.field-help {
   color: #667884;
   font-size: 12px;
+}
+
+.document-relation-field .ant-select {
+  width: 100%;
 }
 
 .file-field input[type="file"] {

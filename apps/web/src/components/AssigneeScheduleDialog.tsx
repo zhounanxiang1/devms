@@ -3,6 +3,7 @@ import { Select as AntSelect } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { label } from "../lib/format";
+import { validateScheduleWithinProjectPlan } from "../lib/schedule";
 import { Defect, DevTask } from "../types";
 import { DateRangeValue, matchSearchOption, TableSearchControl, TableSearchOption } from "./TableSearchControl";
 
@@ -29,6 +30,8 @@ type ScheduleItem = {
   title: string;
   status: string;
   projectName: string;
+  projectPlannedStartDate?: string | null;
+  projectPlannedEndDate?: string | null;
   requirementName: string;
   taskName: string;
   priorityScore: number;
@@ -41,6 +44,8 @@ type ScheduleItem = {
 export type DraftScheduleItem = {
   title: string;
   projectName?: string;
+  projectPlannedStartDate?: string | null;
+  projectPlannedEndDate?: string | null;
   requirementName?: string;
   sourceName?: string;
   priorityScore?: number;
@@ -67,6 +72,8 @@ type DragState = {
   originalEndIndex: number;
   originalStart: Date;
   originalEnd: Date;
+  projectPlanStart: Date | null;
+  projectPlanEnd: Date | null;
 };
 
 type HoverTip = {
@@ -201,6 +208,8 @@ function buildItems(tasks: DevTask[], defects: Defect[], overrides: Record<strin
       title: projectPlan.title || "项目计划",
       status: "计划周期",
       projectName: projectPlan.title || "-",
+      projectPlannedStartDate: projectPlan.plannedStartDate,
+      projectPlannedEndDate: projectPlan.plannedEndDate,
       requirementName: "-",
       taskName: "-",
       priorityScore: 0,
@@ -223,6 +232,8 @@ function buildItems(tasks: DevTask[], defects: Defect[], overrides: Record<strin
         title: task.title,
         status: task.status,
         projectName: task.project?.name || "-",
+        projectPlannedStartDate: task.project?.plannedStartDate,
+        projectPlannedEndDate: task.project?.plannedEndDate,
         requirementName: task.requirement?.title || "-",
         taskName: "-",
         priorityScore: task.priorityScore || 0,
@@ -246,6 +257,8 @@ function buildItems(tasks: DevTask[], defects: Defect[], overrides: Record<strin
         title: defect.title,
         status: defect.status,
         projectName: defect.project?.name || defect.task?.project?.name || "-",
+        projectPlannedStartDate: defect.project?.plannedStartDate || defect.task?.project?.plannedStartDate || defect.task?.requirement?.project?.plannedStartDate,
+        projectPlannedEndDate: defect.project?.plannedEndDate || defect.task?.project?.plannedEndDate || defect.task?.requirement?.project?.plannedEndDate,
         requirementName: defect.task?.requirement?.title || defect.requirement?.title || "-",
         taskName: defect.task?.title || "-",
         priorityScore: defect.priorityScore || 0,
@@ -265,6 +278,8 @@ function buildItems(tasks: DevTask[], defects: Defect[], overrides: Record<strin
       title: draftItem.title || "当前新建任务",
       status: "TODO",
       projectName: draftItem.projectName || "-",
+      projectPlannedStartDate: draftItem.projectPlannedStartDate,
+      projectPlannedEndDate: draftItem.projectPlannedEndDate,
       requirementName: draftItem.requirementName || draftItem.sourceName || "-",
       taskName: "-",
       priorityScore: draftItem.priorityScore || 0,
@@ -301,6 +316,21 @@ function scheduleDisabledReason(item: ScheduleItem) {
   if (item.kind === "project") return "项目甘特图只读展示";
   if (item.kind === "task") return "只有待处理或处理中的任务可以调整排期";
   return "只有待修复或修复中的缺陷可以调整排期";
+}
+
+function scheduleProjectPlan(item: ScheduleItem) {
+  return {
+    plannedStartDate: parseDateOnly(item.projectPlannedStartDate),
+    plannedEndDate: parseDateOnly(item.projectPlannedEndDate)
+  };
+}
+
+function validateProjectPlanSchedule(item: ScheduleItem, range: DateRange) {
+  if (item.kind === "project") return "";
+  return validateScheduleWithinProjectPlan(scheduleProjectPlan(item), {
+    plannedStartDate: range.start,
+    plannedFinishDate: range.end
+  });
 }
 
 function eachDay(start: Date, end: Date) {
@@ -454,9 +484,20 @@ export function AssigneeScheduleDialog({
           : activeDrag.originalEndIndex;
       const nextStart = addDays(activeDrag.chartStart, nextStartIndex);
       const nextEnd = addDays(activeDrag.chartStart, nextEndIndex);
+      const nextRange = { start: nextStart, end: nextEnd };
+      const validationMessage = validateScheduleWithinProjectPlan({
+        plannedStartDate: activeDrag.projectPlanStart,
+        plannedEndDate: activeDrag.projectPlanEnd
+      }, {
+        plannedStartDate: nextRange.start,
+        plannedFinishDate: nextRange.end
+      });
+      if (validationMessage) {
+        setMessage(validationMessage);
+        return;
+      }
       setOverrides((current) => {
         const original = { start: activeDrag.originalStart, end: activeDrag.originalEnd };
-        const nextRange = { start: nextStart, end: nextEnd };
         if (isSameRange(original, nextRange)) {
           const { [activeDrag.itemId]: _discard, ...rest } = current;
           return rest;
@@ -527,6 +568,7 @@ export function AssigneeScheduleDialog({
     const track = event.currentTarget.closest<HTMLElement>(".gantt-track");
     if (!track) return;
     const rect = track.getBoundingClientRect();
+    const projectPlan = scheduleProjectPlan(item);
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setDragState({
@@ -539,7 +581,9 @@ export function AssigneeScheduleDialog({
       originalStartIndex: Math.max(0, diffDays(chartStart, item.start)),
       originalEndIndex: Math.max(0, diffDays(chartStart, item.end)),
       originalStart: item.originalStart || item.start,
-      originalEnd: item.originalEnd || item.end
+      originalEnd: item.originalEnd || item.end,
+      projectPlanStart: projectPlan.plannedStartDate,
+      projectPlanEnd: projectPlan.plannedEndDate
     });
   }
 
@@ -568,6 +612,11 @@ export function AssigneeScheduleDialog({
     }
     const original = { start: item.originalStart, end: item.originalEnd };
     const nextRange = { start: nextStart, end: nextEnd };
+    const validationMessage = validateProjectPlanSchedule(item, nextRange);
+    if (validationMessage) {
+      setMessage(validationMessage);
+      return;
+    }
     setOverrides((current) => {
       if (isSameRange(original, nextRange)) {
         const { [item.id]: _discard, ...rest } = current;
@@ -599,6 +648,16 @@ export function AssigneeScheduleDialog({
     });
     if (invalidPendingChange) {
       setMessage("只有待处理/处理中的开发任务、待修复/修复中的缺陷可以调整排期");
+      return;
+    }
+    const invalidProjectPlanChange = Object.entries(overrides)
+      .map(([id, range]) => {
+        const item = baseItems.find((candidate) => candidate.id === id);
+        return item ? validateProjectPlanSchedule(item, range) : "";
+      })
+      .find(Boolean);
+    if (invalidProjectPlanChange) {
+      setMessage(invalidProjectPlanChange);
       return;
     }
     if (!pendingCount) return;
