@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, renameSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "fs";
 import path from "path";
 import { Response } from "express";
 import { AuthGuard } from "../auth.guard";
@@ -9,9 +9,38 @@ import { CoreService } from "../core.service";
 import { AuthedRequest } from "../types";
 import { toInt } from "../utils";
 
-const DOCUMENT_UPLOAD_DIR = path.join(process.cwd(), "uploads", "project-documents");
 const DOCUMENT_UPLOAD_LIMIT = 50 * 1024 * 1024;
 
+function readEnvFileValue(key: string) {
+  const envFiles = [
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(process.cwd(), "apps/api/.env"),
+    path.resolve(process.cwd(), "../../.env")
+  ];
+
+  for (const envFile of envFiles) {
+    if (!existsSync(envFile)) {
+      continue;
+    }
+    const lines = readFileSync(envFile, "utf8").split(/\r?\n/);
+    const matched = lines.find((line) => line.trim().startsWith(`${key}=`));
+    if (matched) {
+      return matched
+        .slice(key.length + 1)
+        .trim()
+        .replace(/^['"]|['"]$/g, "");
+    }
+  }
+
+  return "";
+}
+
+function resolveDocumentUploadDir() {
+  const configured = process.env.DOCUMENT_UPLOAD_DIR || readEnvFileValue("DOCUMENT_UPLOAD_DIR");
+  return path.resolve(configured || path.join(process.cwd(), "uploads", "project-documents"));
+}
+
+const DOCUMENT_UPLOAD_DIR = resolveDocumentUploadDir();
 mkdirSync(DOCUMENT_UPLOAD_DIR, { recursive: true });
 
 type UploadedDocumentFile = {
