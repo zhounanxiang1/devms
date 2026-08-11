@@ -1553,39 +1553,15 @@ select[multiple] {
   font-weight: 650;
 }
 
-.rich-text-display {
+.long-text-display {
   min-height: 38px;
   color: #354652;
   line-height: 1.58;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
-.rich-text-display p,
-.rich-text-display ul,
-.rich-text-display ol,
-.rich-text-display h2,
-.rich-text-display h3,
-.rich-text-display h4,
-.rich-text-display blockquote {
-  margin: 0 0 8px;
-}
-
-.rich-text-display p:last-child,
-.rich-text-display ul:last-child,
-.rich-text-display ol:last-child,
-.rich-text-display h2:last-child,
-.rich-text-display h3:last-child,
-.rich-text-display h4:last-child,
-.rich-text-display blockquote:last-child {
-  margin-bottom: 0;
-}
-
-.rich-text-display ul,
-.rich-text-display ol {
-  padding-left: 20px;
-}
-
-.rich-empty {
+.long-text-empty {
   color: #8a98a4;
   font-size: 13px;
 }
@@ -1902,7 +1878,7 @@ select[multiple] {
   word-break: break-word;
 }
 
-.detail-rich .rich-text-display {
+.detail-rich .long-text-display {
   padding: 0;
   border: 0;
   background: transparent;
@@ -2022,9 +1998,62 @@ select[multiple] {
   width: 100%;
 }
 
-.file-field input[type="file"] {
-  padding: 7px 10px;
-  cursor: pointer;
+.file-field .ant-upload-wrapper {
+  width: 100%;
+}
+
+.file-field .ant-upload-list {
+  margin-top: 8px;
+}
+
+.attachment-link-button {
+  padding: 0;
+  height: auto;
+}
+
+.attachment-preview-modal .ant-modal-body {
+  min-height: 420px;
+}
+
+.attachment-preview-frame {
+  width: 100%;
+  height: min(68vh, 720px);
+  border: 1px solid #dce4eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.attachment-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: min(68vh, 720px);
+  margin: 0 auto;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.attachment-preview-text {
+  max-height: min(68vh, 720px);
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid #dce4eb;
+  border-radius: 6px;
+  background: #f8fafb;
+  color: #1d2935;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.attachment-preview-state {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  color: #667884;
+  text-align: center;
 }
 
 .document-link-list {
@@ -2104,7 +2133,7 @@ select[multiple] {
   gap: 5px;
 }
 
-.requirement-supplement-rich .rich-text-display {
+.requirement-supplement-rich .long-text-display {
   padding: 0;
   border: 0;
   background: transparent;
@@ -2706,114 +2735,14 @@ select[multiple] {
   border-top: 0;
 }
 
-.rich-editor-field {
+.long-text-field {
   position: relative;
 }
 
-.rich-toolbar {
-  display: inline-flex;
-  flex-wrap: wrap;
-  width: fit-content;
-  max-width: 100%;
-  gap: 4px;
-  border: 1px solid #d5dee6;
-  border-radius: 6px;
-  background: #f8fafb;
-  padding: 4px;
-}
-
-.rich-toolbar button {
-  min-height: 28px;
-  width: 30px;
-  padding: 4px;
-  border-color: transparent;
-  background: transparent;
-}
-
-.rich-toolbar button:hover {
-  border-color: #b9c7d4;
-  background: #ffffff;
-}
-
-.rich-toolbar-divider {
-  width: 1px;
-  min-height: 24px;
-  margin: 2px 3px;
-  background: #dbe3ea;
-}
-
-.rich-editor {
-  min-height: 118px;
-  border: 1px solid #cbd5df;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1d2935;
-  padding: 9px 10px;
-  line-height: 1.55;
-  overflow: auto;
-  outline: none;
-}
-
-.rich-editor:focus {
-  border-color: #6d8ea8;
-  box-shadow: 0 0 0 3px rgba(18, 107, 115, 0.09);
-}
-
-.rich-editor:empty::before {
-  content: attr(data-placeholder);
-  color: #9aa7b2;
-}
-
-.rich-editor p,
-.rich-editor ul,
-.rich-editor ol,
-.rich-editor h2,
-.rich-editor h3,
-.rich-editor h4,
-.rich-editor blockquote {
-  margin: 0 0 8px;
-}
-
-.rich-editor ul,
-.rich-editor ol {
-  padding-left: 20px;
-}
-
-.rich-editor h2,
-.rich-text-display h2 {
-  font-size: 18px;
-  line-height: 1.45;
-  font-weight: 700;
-}
-
-.rich-editor h3,
-.rich-text-display h3 {
-  font-size: 16px;
-  line-height: 1.45;
-  font-weight: 700;
-}
-
-.rich-editor h4,
-.rich-text-display h4 {
-  font-size: 14px;
-  line-height: 1.45;
-  font-weight: 700;
-}
-
-.rich-editor blockquote,
-.rich-text-display blockquote {
-  margin: 0 0 8px;
-  padding: 8px 10px;
-  border-left: 3px solid #9bb4c9;
-  background: #f5f8fa;
-  color: #425466;
-}
-
-.rich-editor a,
-.rich-text-display a {
-  color: #166a8f;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.long-text-editor {
+  min-height: 132px;
+  resize: vertical;
+  line-height: 1.58;
 }
 
 .error {

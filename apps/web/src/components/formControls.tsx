@@ -1,4 +1,6 @@
 import { useMemo, useRef, useState, type ChangeEvent } from "react";
+import { Button as AntButton, message, Upload } from "antd";
+import type { UploadFile, UploadProps } from "antd/es/upload/interface";
 import { Person, Project } from "../types";
 
 export function ProjectSelect({ projects, defaultValue }: { projects: Project[]; defaultValue?: string | number | null }) {
@@ -141,13 +143,50 @@ export function Textarea({ name, label: text, required, defaultValue }: { name: 
   );
 }
 
-export function FileField({ name, label: text, accept }: { name: string; label: string; accept?: string }) {
+export function FileField({
+  name,
+  label: text,
+  accept,
+  value,
+  onChange,
+  maxSizeMb = 50
+}: {
+  name: string;
+  label: string;
+  accept?: string;
+  value?: File | null;
+  onChange?: (file: File | null) => void;
+  maxSizeMb?: number;
+}) {
+  const [innerFile, setInnerFile] = useState<File | null>(null);
+  const selectedFile = value === undefined ? innerFile : value;
+  const fileList: UploadFile[] = selectedFile
+    ? [{ uid: "selected-file", name: selectedFile.name, status: "done", size: selectedFile.size }]
+    : [];
+
+  function commit(file: File | null) {
+    if (value === undefined) setInnerFile(file);
+    onChange?.(file);
+  }
+
+  const beforeUpload: UploadProps["beforeUpload"] = (file) => {
+    if (file.size > maxSizeMb * 1024 * 1024) {
+      void message.error(`单个附件不能超过 ${maxSizeMb}MB`);
+      return Upload.LIST_IGNORE;
+    }
+    commit(file as File);
+    return false;
+  };
+
   return (
-    <label className="field file-field">
+    <div className="field file-field">
       <span className="field-label">{text}</span>
-      <input name={name} type="file" accept={accept} />
+      <Upload accept={accept} beforeUpload={beforeUpload} fileList={fileList} maxCount={1} onRemove={() => { commit(null); return true; }}>
+        <AntButton>选择文件</AntButton>
+      </Upload>
+      <input type="hidden" name={`${name}Name`} value={selectedFile?.name || ""} />
       <span className="file-field-note">选择本地文件后，提交时会作为附件保存。</span>
-    </label>
+    </div>
   );
 }
 

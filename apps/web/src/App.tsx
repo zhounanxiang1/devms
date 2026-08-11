@@ -17,20 +17,20 @@ import { Avatar, Button as AntButton, Card, Collapse as AntCollapse, DatePicker 
 import type { ColumnsType } from "antd/es/table";
 import { Children, FormEvent, isValidElement, lazy, MouseEvent, ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 import type { ComponentType } from "react";
-import { api, clearToken, getToken, patch, post, setToken } from "./api";
+import { api, clearToken, getToken, patch, post, setToken, uploadFile } from "./api";
 import { AssigneeScheduleDialog, ScheduleChange } from "./components/AssigneeScheduleDialog";
 import { Badge, EmptyState, ListSection, Metric } from "./components/common";
 import { DocumentRelationSelector } from "./components/DocumentRelationSelector";
 import { DisplayField, Field, FileField, PeopleSelect, ProjectSelect, ReadonlyField, Select, Textarea } from "./components/formControls";
 import { ProjectLifecycleAction, ProjectLifecycleDialog } from "./components/ProjectLifecycleDialog";
 import { ResizableTable as AntTable } from "./components/ResizableTable";
-import { RichTextDisplay, RichTextEditor } from "./components/RichText";
+import { LongTextDisplay, LongTextEditor } from "./components/LongText";
 import { ScheduleDialog, ScheduleEditState } from "./components/ScheduleDialog";
 import { DateRangeValue, matchSearchOption, TableSearchControl, TableSearchOption } from "./components/TableSearchControl";
 import { clearFormDraft, draftArray, draftValue, FORM_DRAFT_PREFIX, hasDraftValues, readFormDraft, writeFormDraft } from "./lib/formDraft";
 import { dictionaryOptions, dictionaryTypeLabel, dictionaryTypeUsage, fmtDate, isDue, isProductManagerPerson, label, projectStageLabel, toDateInput, todayDateInput } from "./lib/format";
 import { dictionaryTypeMeta } from "./lib/labels";
-import { stripRichText } from "./lib/richText";
+import { stripLongText } from "./lib/longText";
 import { validateScheduleWithinProjectPlan } from "./lib/schedule";
 import { Account, AdminData, AuthState, BoardRuleConfig, Defect, DevTask, Organization, Person, Position, Project, ProjectDocument, ReleaseVersion, Requirement, RequirementSupplement } from "./types";
 
@@ -92,6 +92,132 @@ function canPublishVersionAction(version: ReleaseVersion) {
   return !TERMINAL_VERSION_STATUSES.includes(version.status);
 }
 
+type AttachmentPreviewState = {
+  open: boolean;
+  loading: boolean;
+  error?: string;
+  kind?: "image" | "pdf" | "text" | "download" | "external";
+  objectUrl?: string;
+  text?: string;
+  fileName?: string;
+};
+
+function attachmentFileName(url: string) {
+  const cleanUrl = url.split("?")[0].split("#")[0];
+  const name = cleanUrl.split("/").filter(Boolean).pop() || "attachment";
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
+function attachmentExtension(fileName: string) {
+  return fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")).toLowerCase() : "";
+}
+
+function previewKind(mimeType: string, fileName: string): AttachmentPreviewState["kind"] {
+  const ext = attachmentExtension(fileName);
+  if (mimeType.startsWith("image/") || [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext)) return "image";
+  if (mimeType.includes("pdf") || ext === ".pdf") return "pdf";
+  if (mimeType.startsWith("text/") || [".txt", ".md", ".markdown", ".json", ".csv", ".log", ".xml", ".html", ".css", ".js", ".ts"].includes(ext)) return "text";
+  return "download";
+}
+
+function AttachmentLink({ url }: { url?: string | null }) {
+  const [preview, setPreview] = useState<AttachmentPreviewState>({ open: false, loading: false });
+
+  useEffect(() => {
+    return () => {
+      if (preview.objectUrl) URL.revokeObjectURL(preview.objectUrl);
+    };
+  }, [preview.objectUrl]);
+
+  async function openPreview() {
+    if (!url) return;
+    const fileName = attachmentFileName(url);
+    if (/^https?:\/\//i.test(url)) {
+      setPreview({ open: true, loading: false, kind: "external", objectUrl: url, fileName });
+      return;
+    }
+    setPreview((current) => ({ ...current, open: true, loading: true, error: undefined, fileName }));
+    try {
+      const headers = new Headers();
+      const token = getToken();
+      if (url.startsWith("/api/") && token) headers.set("Authorization", `Bearer ${token}`);
+      const response = await fetch(url, { headers });
+      if (!response.ok) throw new Error("附件加载失败。");
+      const blob = await response.blob();
+      const mimeType = blob.type || response.headers.get("Content-Type") || "";
+      const kind = previewKind(mimeType, fileName);
+      const objectUrl = URL.createObjectURL(blob);
+      const text = kind === "text" ? await blob.text() : undefined;
+      setPreview((current) => {
+        if (current.objectUrl) URL.revokeObjectURL(current.objectUrl);
+        return { open: true, loading: false, kind, objectUrl, text, fileName };
+      });
+    } catch (error: any) {
+      setPreview({ open: true, loading: false, error: error.message || "附件加载失败。", fileName });
+    }
+  }
+
+  function closePreview() {
+    if (preview.objectUrl && preview.kind !== "external") URL.revokeObjectURL(preview.objectUrl);
+    setPreview({ open: false, loading: false });
+  }
+
+  if (!url) return <>-</>;
+  return (
+    <>
+      <AntButton className="attachment-link-button" size="small" type="link" onClick={openPreview}>
+        预览附件
+      </AntButton>
+      <AntModal
+        className="attachment-preview-modal"
+        title={preview.fileName || "附件预览"}
+        open={preview.open}
+        width={920}
+        footer={
+          <Space>
+            {preview.objectUrl ? (
+              <AntButton
+                onClick={() => {
+                  const previewUrl = preview.objectUrl;
+                  if (!previewUrl) return;
+                  if (preview.kind === "external") {
+                    window.open(previewUrl, "_blank", "noopener,noreferrer");
+                    return;
+                  }
+                  const anchor = document.createElement("a");
+                  anchor.href = previewUrl;
+                  anchor.download = preview.fileName || "attachment";
+                  anchor.click();
+                }}
+              >
+                下载
+              </AntButton>
+            ) : null}
+            <AntButton type="primary" onClick={closePreview}>关闭</AntButton>
+          </Space>
+        }
+        onCancel={closePreview}
+      >
+        {preview.loading ? <div className="attachment-preview-state">附件加载中...</div> : null}
+        {!preview.loading && preview.error ? <div className="attachment-preview-state error">{preview.error}</div> : null}
+        {!preview.loading && !preview.error && preview.kind === "image" && preview.objectUrl ? <img className="attachment-preview-image" src={preview.objectUrl} alt={preview.fileName || "附件"} /> : null}
+        {!preview.loading && !preview.error && preview.kind === "pdf" && preview.objectUrl ? <iframe className="attachment-preview-frame" src={preview.objectUrl} title={preview.fileName || "PDF 预览"} /> : null}
+        {!preview.loading && !preview.error && preview.kind === "text" ? <pre className="attachment-preview-text">{preview.text}</pre> : null}
+        {!preview.loading && !preview.error && preview.kind === "external" && preview.objectUrl ? <iframe className="attachment-preview-frame" src={preview.objectUrl} title={preview.fileName || "附件预览"} /> : null}
+        {!preview.loading && !preview.error && preview.kind === "download" ? (
+          <div className="attachment-preview-state">
+            当前文件类型不适合浏览器内预览，请点击下方下载后使用本地软件查看。
+          </div>
+        ) : null}
+      </AntModal>
+    </>
+  );
+}
+
 type ProjectRichInfo = Pick<Project, "id" | "scope" | "background" | "goal" | "relatedSystems">;
 
 const PROJECT_RICH_FIELDS = [
@@ -106,11 +232,11 @@ function projectRichValue(project: ProjectRichInfo, key: (typeof PROJECT_RICH_FI
 }
 
 function hasProjectRichValue(project: ProjectRichInfo, key: (typeof PROJECT_RICH_FIELDS)[number]["key"]) {
-  return Boolean(stripRichText(projectRichValue(project, key)).trim());
+  return Boolean(stripLongText(projectRichValue(project, key)).trim());
 }
 
 function ProjectRichContent({ value, emptyText }: { value?: string | null; emptyText: string }) {
-  if (!stripRichText(value || "").trim()) {
+  if (!stripLongText(value || "").trim()) {
     return (
       <AntEmpty
         className="project-rich-empty-state"
@@ -121,7 +247,7 @@ function ProjectRichContent({ value, emptyText }: { value?: string | null; empty
   }
   return (
     <div className="project-rich-content">
-      <RichTextDisplay value={value} />
+      <LongTextDisplay value={value} />
     </div>
   );
 }
@@ -2386,7 +2512,7 @@ function ProjectManagement({
   const documentTypeFilterOptions = countFilterOptions(DOCUMENT_TYPE_OPTIONS, documents, (doc) => doc.type);
   const documentSearchOptions: Array<TableSearchOption<any>> = [
     { value: "name", label: "名称", type: "text", reader: (doc) => doc.name },
-    { value: "description", label: "资料描述", type: "text", reader: (doc) => stripRichText(doc.description || "") },
+    { value: "description", label: "资料描述", type: "text", reader: (doc) => stripLongText(doc.description || "") },
     { value: "creator", label: "创建人", type: "text", reader: (doc) => doc.createdBy?.name },
     { value: "tags", label: "标签/版本", type: "text", reader: (doc) => doc.tags || doc.version },
     { value: "createdAt", label: "创建时间", type: "date", reader: (doc) => doc.createdAt }
@@ -2521,8 +2647,8 @@ function ProjectManagement({
     { title: "资料", sorter: compareText<any>((doc) => doc.name), render: (_: unknown, doc: any) => <Space direction="vertical" size={1}><strong>{doc.name}</strong><span className="muted-line">{doc.tags || doc.version || "-"}</span></Space> },
     { title: "类型", width: 110, sorter: compareText<any>((doc) => label(doc.type)), render: (_: unknown, doc: any) => label(doc.type) },
     { title: "版本", width: 100, sorter: compareText<any>((doc) => doc.version), render: (_: unknown, doc: any) => doc.version || "-" },
-    { title: "资料描述", render: (_: unknown, doc: any) => <RichTextDisplay value={doc.description} /> },
-    { title: "附件", width: 100, render: (_: unknown, doc: any) => doc.attachmentUrl ? <a href={doc.attachmentUrl} target="_blank" rel="noreferrer">打开附件</a> : "-" },
+    { title: "资料描述", render: (_: unknown, doc: any) => <LongTextDisplay value={doc.description} /> },
+    { title: "附件", width: 100, render: (_: unknown, doc: any) => <AttachmentLink url={doc.attachmentUrl} /> },
     { title: "创建人", width: 110, sorter: compareText<any>((doc) => doc.createdBy?.name), render: (_: unknown, doc: any) => doc.createdBy?.name || "-" },
     { title: "创建时间", width: 160, sorter: compareDate<any>((doc) => doc.createdAt), render: (_: unknown, doc: any) => fmtDateTime(doc.createdAt) }
   ];
@@ -4334,15 +4460,7 @@ function RequirementSupplementDialog({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formElement = event.currentTarget;
-    const invalidRichField = Array.from(formElement.querySelectorAll<HTMLInputElement>("[data-rich-required='true']")).find((input) => !stripRichText(input.value));
-    if (invalidRichField) {
-      const fieldLabel = invalidRichField.dataset.richLabel || "富文本字段";
-      setDraftMessage(`${fieldLabel}不能为空。`);
-      invalidRichField.closest(".rich-editor-field")?.querySelector<HTMLElement>(".rich-editor")?.focus();
-      return;
-    }
-    const form = new FormData(formElement);
+    const form = new FormData(event.currentTarget);
     const body = await formDataToBody(form);
     Object.keys(body).forEach((key) => {
       if (key.endsWith("__required")) delete body[key];
@@ -4388,9 +4506,9 @@ function RequirementSupplementDialog({
           options={REQUIREMENT_SUPPLEMENT_TYPE_OPTIONS.map((item) => [item.value, item.label] as [string, string])}
           defaultValue={draftValue(draft, "type", "DETAIL")}
         />
-        <RichTextEditor name="reason" label="补充原因" defaultValue={draftValue(draft, "reason")} />
-        <RichTextEditor name="content" label="补充内容" required defaultValue={draftValue(draft, "content")} />
-        <RichTextEditor name="impactScope" label="影响范围/处理建议" defaultValue={draftValue(draft, "impactScope")} />
+        <LongTextEditor name="reason" label="补充原因" defaultValue={draftValue(draft, "reason")} />
+        <LongTextEditor name="content" label="补充内容" required defaultValue={draftValue(draft, "content")} />
+        <LongTextEditor name="impactScope" label="影响范围/处理建议" defaultValue={draftValue(draft, "impactScope")} />
         {draftMessage || draftRestored ? <p className="draft-hint">{draftMessage || "已恢复上次暂存草稿，提交成功后会自动清除。"}</p> : null}
         <div className="form-actions">
           {draftRestored ? (
@@ -4438,10 +4556,10 @@ function TaskCompleteDialog({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
-    const completionInput = formElement.querySelector<HTMLInputElement>("input[name='completionNote']");
-    if (!stripRichText(completionInput?.value || "")) {
+    const completionInput = formElement.querySelector<HTMLTextAreaElement>("textarea[name='completionNote']");
+    if (!stripLongText(completionInput?.value || "")) {
       setDraftMessage("开发说明不能为空。");
-      completionInput?.closest(".rich-editor-field")?.querySelector<HTMLElement>(".rich-editor")?.focus();
+      completionInput?.focus();
       return;
     }
     const form = new FormData(formElement);
@@ -4490,7 +4608,7 @@ function TaskCompleteDialog({
           <DisplayField label="负责人" value={activeTask.assignee?.name || "-"} />
           <DisplayField label="优先级分数" value={activeTask.priorityScore} />
         </div>
-        <RichTextEditor name="completionNote" label="开发说明" required defaultValue={draftValue(draft, "completionNote", activeTask.completionNote)} />
+        <LongTextEditor name="completionNote" label="开发说明" required defaultValue={draftValue(draft, "completionNote", activeTask.completionNote)} />
         <div className="form-section-box">
           <div>
             <strong>关联开发资料</strong>
@@ -4598,20 +4716,20 @@ function RequirementDetailDialog({ requirement, tasks, defects, onClose }: { req
                           </div>
                           <Tag>{requirementSupplementTypeLabel(supplement.type)}</Tag>
                         </div>
-                        {stripRichText(supplement.reason || "").trim() ? (
+                        {stripLongText(supplement.reason || "").trim() ? (
                           <div className="requirement-supplement-rich">
                             <span>补充原因</span>
-                            <RichTextDisplay value={supplement.reason} />
+                            <LongTextDisplay value={supplement.reason} />
                           </div>
                         ) : null}
                         <div className="requirement-supplement-rich">
                           <span>补充内容</span>
-                          <RichTextDisplay value={supplement.content} />
+                          <LongTextDisplay value={supplement.content} />
                         </div>
-                        {stripRichText(supplement.impactScope || "").trim() ? (
+                        {stripLongText(supplement.impactScope || "").trim() ? (
                           <div className="requirement-supplement-rich">
                             <span>影响范围/处理建议</span>
-                            <RichTextDisplay value={supplement.impactScope} />
+                            <LongTextDisplay value={supplement.impactScope} />
                           </div>
                         ) : null}
                       </div>
@@ -4654,8 +4772,8 @@ function RequirementDetailDialog({ requirement, tasks, defects, onClose }: { req
                         <strong>{doc.name}</strong>
                         <span>{label(doc.type)}</span>
                       </div>
-                      <RichTextDisplay value={doc.description} />
-                      {doc.attachmentUrl ? <a href={doc.attachmentUrl} target="_blank" rel="noreferrer">打开附件</a> : null}
+                      <LongTextDisplay value={doc.description} />
+                      {doc.attachmentUrl ? <AttachmentLink url={doc.attachmentUrl} /> : null}
                     </div>
                   );
                 })}
@@ -4761,8 +4879,8 @@ function TaskDetailDialog({ task, onClose }: { task: DevTask | null; onClose: ()
                         <strong>{doc.name}</strong>
                         <span>{label(doc.type)} · {doc.createdBy?.name || "未知归档人"} · {fmtDateTime(doc.createdAt)}</span>
                       </div>
-                      <RichTextDisplay value={doc.description} />
-                      {doc.attachmentUrl ? <a href={doc.attachmentUrl} target="_blank" rel="noreferrer">打开附件</a> : null}
+                      <LongTextDisplay value={doc.description} />
+                      {doc.attachmentUrl ? <AttachmentLink url={doc.attachmentUrl} /> : null}
                     </div>
                   );
                 })}
@@ -4872,7 +4990,7 @@ function DetailRich({ label: text, value }: { label: string; value?: string | nu
   return (
     <div className="detail-rich">
       <span>{text}</span>
-      {stripRichText(content) ? <RichTextDisplay value={content} /> : <strong>-</strong>}
+      {stripLongText(content) ? <LongTextDisplay value={content} /> : <strong>-</strong>}
     </div>
   );
 }
@@ -4928,8 +5046,8 @@ async function formDataToBody(form: FormData, fileMappings: FileFormMapping = {}
   for (const [name, value] of form.entries()) {
     if (value instanceof File) {
       if (!value.name || value.size === 0) continue;
-      if (value.size > 8 * 1024 * 1024) {
-        throw new Error("单个附件不能超过 8MB");
+      if (value.size > 50 * 1024 * 1024) {
+        throw new Error("单个附件不能超过 50MB");
       }
       const mapping = fileMappings[name];
       const fileUrl = await fileToDataUrl(value);
@@ -5382,9 +5500,11 @@ function CreateDrawer({
   const [defectLevel, setDefectLevel] = useState(String(draftValue(draft, "level", "L3") || "L3"));
   const [defectTimingBonus, setDefectTimingBonus] = useState(String(draftValue(draft, "timingBonus", "") ?? ""));
   const [scheduleViewOpen, setScheduleViewOpen] = useState(false);
+  const [documentAttachmentFile, setDocumentAttachmentFile] = useState<File | null>(null);
   const openProjectFallbackId = projects.find((project) => project.stage !== "CLOSED")?.id || "";
   useEffect(() => {
     setDraftMessage("");
+    setDocumentAttachmentFile(null);
   }, [draftKey]);
   useEffect(() => {
     if (kind === "version") {
@@ -5489,20 +5609,19 @@ function CreateDrawer({
   };
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const invalidRichField = Array.from(event.currentTarget.querySelectorAll<HTMLInputElement>("[data-rich-required='true']")).find((input) => !stripRichText(input.value));
-    if (invalidRichField) {
-      setDraftMessage(`${invalidRichField.dataset.richLabel || "必填内容"}不能为空。`);
-      invalidRichField.closest(".rich-editor-field")?.querySelector<HTMLElement>(".rich-editor")?.focus();
-      return;
-    }
     const form = new FormData(event.currentTarget);
     let body: Record<string, any>;
     try {
       body = await formDataToBody(form, {
         attachmentFile: { urlKey: "attachmentUrl", nameKey: "attachmentFileName" }
       });
+      if (activeDrawerKind === "document" && documentAttachmentFile) {
+        const uploaded = await uploadFile<{ url: string; fileName: string; size: number; mimeType: string }>("/documents/upload", documentAttachmentFile);
+        body.attachmentUrl = uploaded.url;
+        body.attachmentFileName = uploaded.fileName;
+      }
     } catch (err: any) {
-      setDraftMessage(err.message || "附件读取失败");
+      setDraftMessage(err.message || "附件上传失败");
       return;
     }
     const missingRequiredSelect = Object.keys(body).find((key) => {
@@ -5592,14 +5711,14 @@ function CreateDrawer({
           {activeDrawerKind === "project" ? (
             <>
               <Field name="name" label="项目名称" required defaultValue={draftValue(draft, "name", editingProject?.name)} />
-              <RichTextEditor name="scope" label="需求范围" required defaultValue={draftValue(draft, "scope", editingProject?.scope)} />
+              <LongTextEditor name="scope" label="需求范围" required defaultValue={draftValue(draft, "scope", editingProject?.scope)} />
               <Field name="plannedStartDate" label="计划开始时间" type="date" defaultValue={draftValue(draft, "plannedStartDate", editingProject ? toDateInput(editingProject.plannedStartDate) : todayDateInput())} />
               <Field name="plannedEndDate" label="计划结束时间" type="date" defaultValue={draftValue(draft, "plannedEndDate", toDateInput(editingProject?.plannedEndDate))} />
               <Field name="expectedLaunchDate" label="期望上线时间" type="date" defaultValue={draftValue(draft, "expectedLaunchDate", toDateInput(editingProject?.expectedLaunchDate))} />
               <PeopleSelect name="ownerId" label="项目负责人" people={productManagers} required defaultValue={draftValue(draft, "ownerId", defaultProjectOwnerId)} />
-              <RichTextEditor name="background" label="项目背景" defaultValue={draftValue(draft, "background", editingProject?.background)} />
-              <RichTextEditor name="goal" label="项目目标" defaultValue={draftValue(draft, "goal", editingProject?.goal)} />
-              <RichTextEditor name="relatedSystems" label="涉及系统" defaultValue={draftValue(draft, "relatedSystems", editingProject?.relatedSystems)} />
+              <LongTextEditor name="background" label="项目背景" defaultValue={draftValue(draft, "background", editingProject?.background)} />
+              <LongTextEditor name="goal" label="项目目标" defaultValue={draftValue(draft, "goal", editingProject?.goal)} />
+              <LongTextEditor name="relatedSystems" label="涉及系统" defaultValue={draftValue(draft, "relatedSystems", editingProject?.relatedSystems)} />
             </>
           ) : null}
           {activeDrawerKind === "requirement" ? (
@@ -5620,8 +5739,8 @@ function CreateDrawer({
               <Select name="priorityLevel" label="需求性质" value={requirementPriorityLevel} onChange={setRequirementPriorityLevel} options={(requirementPriorities.length ? requirementPriorities.filter((item) => item.isActive !== false).map((item) => [item.code, item.name] as [string, string]) : [["P0", "P0"], ["P1", "P1"], ["P2", "P2"], ["P3", "P3"], ["P4", "P4"]])} />
               <TimingBonusFields value={requirementTimingBonus} onChange={setRequirementTimingBonus} defaultReason={draftValue(draft, "timingBonusReason")} />
               <PriorityScorePreview score={requirementPreviewScore} formula={requirementFormula} />
-              <RichTextEditor name="description" label="需求描述" required defaultValue={draftValue(draft, "description")} />
-              <RichTextEditor name="acceptanceCriteria" label="验收标准" required defaultValue={draftValue(draft, "acceptanceCriteria")} />
+              <LongTextEditor name="description" label="需求描述" required defaultValue={draftValue(draft, "description")} />
+              <LongTextEditor name="acceptanceCriteria" label="验收标准" required defaultValue={draftValue(draft, "acceptanceCriteria")} />
               <div className="form-section-box">
                 <div>
                   <strong>关联资料</strong>
@@ -5686,7 +5805,7 @@ function CreateDrawer({
               <TimingBonusFields value={defectTimingBonus} onChange={setDefectTimingBonus} defaultReason={draftValue(draft, "timingBonusReason")} />
               <PriorityScorePreview score={defectPreviewScore} formula={defectFormula} />
               <Field name="entryPoint" label="发现入口/页面/接口" defaultValue={draftValue(draft, "entryPoint")} />
-              <RichTextEditor name="description" label="缺陷描述" required defaultValue={draftValue(draft, "description")} />
+              <LongTextEditor name="description" label="缺陷描述" required defaultValue={draftValue(draft, "description")} />
               <Textarea name="impactScope" label="影响范围" defaultValue={draftValue(draft, "impactScope")} />
               <Textarea name="precondition" label="前置条件" defaultValue={draftValue(draft, "precondition")} />
               <Textarea name="reproduceSteps" label="复现步骤" defaultValue={draftValue(draft, "reproduceSteps")} />
@@ -5716,8 +5835,8 @@ function CreateDrawer({
               )}
               <Field name="name" label="资料名称" required defaultValue={draftValue(draft, "name")} />
               <Select name="type" label="资料类型" options={documentTypeOptions} defaultValue={draftValue(draft, "type")} />
-              <RichTextEditor name="description" label="资料描述" defaultValue={draftValue(draft, "description")} />
-              <FileField name="attachmentFile" label="上传附件" />
+              <LongTextEditor name="description" label="资料描述" defaultValue={draftValue(draft, "description")} />
+              <FileField name="attachmentFile" label="上传附件" value={documentAttachmentFile} onChange={setDocumentAttachmentFile} />
             </>
           ) : null}
           {activeDrawerKind === "person" ? (
