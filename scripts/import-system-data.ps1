@@ -4,7 +4,8 @@ param(
   [string]$User = "dms_app",
   [string]$Database = "demand_mgmt_test",
   [string]$Input = "",
-  [string]$MySql = "mysql"
+  [string]$MySql = "mysql",
+  [switch]$AppendOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,30 +51,45 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 if (!$Input) {
   $Input = Join-Path $repoRoot "deploy\system_data.sql"
 }
+$ClearInput = Join-Path $repoRoot "deploy\clear_system_data.sql"
 
 if (!(Test-Path $Input)) {
   throw "System data file not found: $Input"
 }
+if (!$AppendOnly -and !(Test-Path $ClearInput)) {
+  throw "System data clear file not found: $ClearInput"
+}
 
 $mysqlExe = Resolve-Executable -CommandName $MySql -FallbackPath "D:\mysql\mysql-8.4.10-winx64\bin\mysql.exe"
 $sourcePath = (Resolve-Path $Input).Path.Replace("\", "/")
+$clearPath = if (Test-Path $ClearInput) { (Resolve-Path $ClearInput).Path.Replace("\", "/") } else { "" }
 
 Ensure-Password
 
-$mysqlArgs = @(
-  "--host=$HostName",
-  "--port=$Port",
-  "--user=$User",
-  "--default-character-set=utf8mb4",
-  $Database,
-  "--execute=source $sourcePath"
-)
+function Invoke-MySqlSource {
+  param([string]$SqlPath)
 
-try {
+  $mysqlArgs = @(
+    "--host=$HostName",
+    "--port=$Port",
+    "--user=$User",
+    "--default-character-set=utf8mb4",
+    $Database,
+    "--execute=source $SqlPath"
+  )
+
   & $mysqlExe @mysqlArgs
   if ($LASTEXITCODE -ne 0) {
     throw "mysql import failed with exit code $LASTEXITCODE."
   }
+}
+
+try {
+  if (!$AppendOnly) {
+    Write-Host "Clearing existing system master data before import..."
+    Invoke-MySqlSource -SqlPath $clearPath
+  }
+  Invoke-MySqlSource -SqlPath $sourcePath
   Write-Host "System data imported from $Input"
 } finally {
   if ($createdPasswordEnv) {

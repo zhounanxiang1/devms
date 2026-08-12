@@ -5,7 +5,7 @@ param(
   [string]$Database = "demand_mgmt",
   [string]$Output = "",
   [string]$MySqlDump = "mysqldump",
-  [switch]$ExcludeCodeSequence
+  [switch]$IncludeCodeSequence
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,7 +97,7 @@ $tables = @(
   "BoardRuleConfig"
 )
 
-if (!$ExcludeCodeSequence) {
+if ($IncludeCodeSequence) {
   $tables += "CodeSequence"
 }
 
@@ -113,6 +113,7 @@ $dumpArgs = @(
   "--no-tablespaces",
   "--single-transaction",
   "--skip-lock-tables",
+  "--skip-add-locks",
   $Database
 )
 $dumpArgs += $tables

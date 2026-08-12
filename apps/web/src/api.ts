@@ -4,17 +4,21 @@ export type ApiError = {
 };
 
 const API_BASE = "/api";
+const TOKEN_KEY = "dms_token";
 
 export function getToken() {
-  return localStorage.getItem("dms_token") || "";
+  return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || "";
 }
 
-export function setToken(token: string) {
-  localStorage.setItem("dms_token", token);
+export function setToken(token: string, remember = false) {
+  clearToken();
+  const storage = remember ? localStorage : sessionStorage;
+  storage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken() {
-  localStorage.removeItem("dms_token");
+  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
 }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {

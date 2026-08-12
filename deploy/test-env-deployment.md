@@ -54,7 +54,7 @@ FLUSH PRIVILEGES;
 ## 5. 拉代码并安装依赖
 
 ```bash
-git clone https://github.com/zhounanxiang1/devms.git
+git clone ssh://git@gitlab.nebulawx.com:222/common/devms.git
 cd devms
 npm install
 ```
@@ -70,17 +70,24 @@ npm run db:deploy
 
 ## 7. 导入基础系统数据
 
-执行结构迁移后，再导入系统数据：
+执行结构迁移后，再导入系统数据。注意：迁移脚本会预置部分字典和看板规则，不能直接裸导入 `deploy/system_data.sql`，否则可能产生主键或唯一键冲突。
 
-```bash
-mysql --default-character-set=utf8mb4 -h mysql-host -P 3306 -u user -p demand_mgmt_test < deploy/system_data.sql
-```
-
-Windows 环境可以用脚本导入：
+推荐使用导入脚本。脚本默认会先清理系统基础表，再导入 `deploy/system_data.sql`：
 
 ```bash
 npm run db:system:import -- -HostName mysql-host -Port 3306 -User user -Database demand_mgmt_test
 ```
+
+如果后端部署环境不用 PowerShell，可以先执行清理 SQL，再导入基础数据：
+
+```bash
+mysql --default-character-set=utf8mb4 -h mysql-host -P 3306 -u user -p demand_mgmt_test < deploy/clear_system_data.sql
+mysql --default-character-set=utf8mb4 -h mysql-host -P 3306 -u user -p demand_mgmt_test < deploy/system_data.sql
+```
+
+上述方式适用于新建测试库，或确认测试库中的系统基础数据可以被替换的场景。本次迁移不包含项目、需求、任务、缺陷、版本、资料等业务数据。
+
+如果目标环境已经存在需要保留的业务数据，不要直接执行清理和导入，应改用按表、按唯一键的增量合并方案。
 
 系统数据包括：
 
@@ -93,7 +100,6 @@ npm run db:system:import -- -HostName mysql-host -Port 3306 -User user -Database
 - `RequirementPriority`
 - `DefectPriority`
 - `BoardRuleConfig`
-- `CodeSequence`
 
 导入系统数据后不要再执行 `npm run db:seed`。`db:seed` 只用于本地空库快速初始化，和 `deploy/system_data.sql` 不是同一个用途。
 

@@ -44,7 +44,9 @@ export class AuthController {
       positions: Array.from(new Set(positions)),
       primaryPosition: account.person.primaryPosition?.code || null
     };
-    const token = jwt.sign(user, process.env.JWT_SECRET || "local-dev-secret", { expiresIn: "12h" });
+    const token = jwt.sign(user, process.env.JWT_SECRET || "local-dev-secret", {
+      expiresIn: body.rememberMe ? "30d" : "12h"
+    });
     await this.prisma.account.update({
       where: { id: account.id },
       data: { lastLoginAt: new Date(), failedLoginCount: 0 }
@@ -69,4 +71,3 @@ export class AuthController {
     return { user: req.user, account };
   }
 }
-

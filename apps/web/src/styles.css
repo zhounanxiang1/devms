@@ -104,6 +104,19 @@ button.compact:not(.ant-btn) {
   gap: 14px;
 }
 
+.login-remember {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #334553;
+}
+
+.login-remember input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 label,
 .field {
   display: grid;

@@ -481,9 +481,10 @@ export function App() {
     try {
       const res = await post<{ token: string; user: AuthState["user"]; person: AuthState["person"] }>("/auth/login", {
         username: form.get("username"),
-        password: form.get("password")
+        password: form.get("password"),
+        rememberMe: form.get("rememberMe") === "on"
       });
-      setToken(res.token);
+      setToken(res.token, form.get("rememberMe") === "on");
       setAuth({ user: res.user, person: res.person });
     } catch (err: any) {
       setError(err.message || "登录失败");
@@ -651,11 +652,15 @@ export function App() {
           <form onSubmit={login} className="login-form">
             <label>
               登录账号
-              <input name="username" defaultValue="pm_admin" autoComplete="username" />
+              <input name="username" autoComplete="username" />
             </label>
             <label>
               密码
-              <input name="password" type="password" defaultValue="123" autoComplete="current-password" />
+              <input name="password" type="password" autoComplete="current-password" />
+            </label>
+            <label className="login-remember">
+              <input name="rememberMe" type="checkbox" />
+              <span>记住我，30 天内免登录</span>
             </label>
             {error ? <pre className="error">{error}</pre> : null}
             <button disabled={busy} className="primary" type="submit">

@@ -144,7 +144,7 @@ async function main() {
     create: {
       name: "初始产品经理",
       employeeNo: "PM001",
-      email: "pm_admin@example.local",
+      email: "znx@example.local",
       organizationId: org.id,
       primaryPositionId: productPosition.id,
       employmentStatus: "ACTIVE"
@@ -158,23 +158,34 @@ async function main() {
   });
 
   const passwordHash = await bcrypt.hash("123", 10);
-  await prisma.account.upsert({
-    where: { username: "pm_admin" },
-    update: {
-      personId: person.id,
-      status: "ACTIVE",
-      allowLogin: true,
-      passwordHash
-    },
-    create: {
-      username: "pm_admin",
-      passwordHash,
-      personId: person.id,
-      status: "ACTIVE",
-      allowLogin: true,
-      initialPassword: true
+  const existingAccount = await prisma.account.findFirst({
+    where: {
+      OR: [{ username: "znx" }, { personId: person.id }]
     }
   });
+  if (existingAccount) {
+    await prisma.account.update({
+      where: { id: existingAccount.id },
+      data: {
+        username: "znx",
+        personId: person.id,
+        status: "ACTIVE",
+        allowLogin: true,
+        passwordHash
+      }
+    });
+  } else {
+    await prisma.account.create({
+      data: {
+        username: "znx",
+        passwordHash,
+        personId: person.id,
+        status: "ACTIVE",
+        allowLogin: true,
+        initialPassword: true
+      }
+    });
+  }
 }
 
 main()
