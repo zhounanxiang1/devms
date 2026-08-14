@@ -104,17 +104,35 @@ button.compact:not(.ant-btn) {
   gap: 14px;
 }
 
-.login-remember {
-  display: inline-flex;
-  align-items: center;
+.login-field {
+  display: grid;
   gap: 8px;
+  font-size: 14px;
   color: #334553;
 }
 
-.login-remember input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
+.login-remember.ant-checkbox-wrapper {
+  align-items: center;
+  justify-self: end;
+  margin: 2px 0 8px;
+  color: #334553;
+  line-height: 1.4;
+}
+
+.login-submit.ant-btn {
+  width: 100%;
+  height: 44px;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  background: #126b73;
+  border-color: #126b73;
+}
+
+.login-submit.ant-btn:hover,
+.login-submit.ant-btn:focus {
+  background: #0f5d64;
+  border-color: #0f5d64;
 }
 
 label,

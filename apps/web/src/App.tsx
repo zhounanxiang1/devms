@@ -13,7 +13,7 @@ import {
   Trash2,
   Users
 } from "lucide-react";
-import { Avatar, Button as AntButton, Card, Collapse as AntCollapse, DatePicker as AntDatePicker, Descriptions, Dropdown as AntDropdown, Empty as AntEmpty, Input as AntInput, InputNumber as AntInputNumber, Menu as AntMenu, Modal as AntModal, Select as AntSelect, Space, Tabs as AntTabs, Tag, Timeline as AntTimeline } from "antd";
+import { Avatar, Button as AntButton, Card, Checkbox as AntCheckbox, Collapse as AntCollapse, DatePicker as AntDatePicker, Descriptions, Dropdown as AntDropdown, Empty as AntEmpty, Input as AntInput, InputNumber as AntInputNumber, Menu as AntMenu, Modal as AntModal, Select as AntSelect, Space, Tabs as AntTabs, Tag, Timeline as AntTimeline } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Children, FormEvent, isValidElement, lazy, MouseEvent, ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 import type { ComponentType } from "react";
@@ -650,22 +650,21 @@ export function App() {
             <h1>内部需求开发管理系统</h1>
           </div>
           <form onSubmit={login} className="login-form">
-            <label>
+            <label className="login-field">
               登录账号
-              <input name="username" autoComplete="username" />
+              <AntInput name="username" autoComplete="username" size="large" />
             </label>
-            <label>
+            <label className="login-field">
               密码
-              <input name="password" type="password" autoComplete="current-password" />
+              <AntInput.Password name="password" autoComplete="current-password" size="large" />
             </label>
-            <label className="login-remember">
-              <input name="rememberMe" type="checkbox" />
-              <span>记住我，30 天内免登录</span>
-            </label>
+            <AntCheckbox name="rememberMe" className="login-remember">
+              记住我，30 天内免登录
+            </AntCheckbox>
             {error ? <pre className="error">{error}</pre> : null}
-            <button disabled={busy} className="primary" type="submit">
-              <CheckCircle2 size={18} /> 登录
-            </button>
+            <AntButton className="login-submit" disabled={busy} htmlType="submit" icon={<CheckCircle2 size={18} />} loading={busy} type="primary">
+              登录
+            </AntButton>
           </form>
         </section>
       </main>
